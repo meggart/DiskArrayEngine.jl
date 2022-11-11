@@ -1,0 +1,13 @@
+name = "DiskArrayEngine"
+uuid = "2d4b2e14-ccd6-4284-b8b0-2378ace7c126"
+authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
+version = "0.1.0"
+
+[compat]
+julia = "1"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
