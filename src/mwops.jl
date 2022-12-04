@@ -1,4 +1,4 @@
-using DiskArrays: DiskArrays, ChunkType
+using DiskArrays: DiskArrays, ChunkType, GridChunks
 
 struct ProcessingSteps{S,T<:AbstractVector{S}} <: AbstractVector{S}
     offset::Int
@@ -7,7 +7,7 @@ end
 Base.size(p::ProcessingSteps,i...) = size(p.v,i...)
 Base.getindex(p::ProcessingSteps,i::Int) = p.v[i] .- p.offset
 
-internal_size(p::ProcessingSteps) = last(last(p.v))-first(first(p.v))+1
+internal_size(p) = last(last(p))-first(first(p))+1
 function subset_step_to_chunks(p::ProcessingSteps,cs::ChunkType)
     centers = map(x->(first(x)+last(x))/2,p)
     map(cs) do r
@@ -16,6 +16,15 @@ function subset_step_to_chunks(p::ProcessingSteps,cs::ChunkType)
         ProcessingSteps(0,view(p.v,i1:i2))
     end
 end
+
+struct InputArray{A,W,IL}
+    a::A
+    windows::W
+    lr::Val{IL}
+end
+
+getdata(c::InputArray) = c.a
+getloopinds(::InputArray{<:Any,<:Any,IL}) where IL = IL 
 
 
 """
@@ -30,18 +39,17 @@ Field names:
 * `steps` range denoting the center coordinates for each step of the op
 * `outputs` ids of related outputs and indices of their dimension index
 """
-struct MWOp
-    rtot::UnitRange
-    parentchunks
-    w::Union{Nothing,Tuple{Int,Int}}
-    steps::ProcessingSteps
-    outputs
-    is_ordered
+struct MWOp{G<:ChunkType,P}
+    rtot::UnitRange{Int64}
+    parentchunks::G
+    steps::P
+    is_ordered::Bool
 end
-function MWOp(parentchunks; w=nothing,
-    r = range_from_parentchunks(parentchunks), steps=ProcessingSteps(0,r),outputs = (), is_ordered=false)
-    MWOp(r, parentchunks, w, steps, outputs,is_ordered)
+function MWOp(parentchunks; r = first(first(parentchunks)):last(last(parentchunks)), steps=ProcessingSteps(0,r),is_ordered=false)
+    MWOp(r, parentchunks, steps, is_ordered)
 end
+
+mysub(ia,t) = map(li->t[li],getloopinds(ia))
 
 "Returns the full domain that a `DiskArrays.ChunkType` object covers as a unit range"
 domain_from_chunktype(ct) = first(first(ct)):last(last(ct))
@@ -52,11 +60,8 @@ length_from_chunktype(ct) = length(domain_from_chunktype(ct))
 "Tests that a supplied list of parent chunks covers the same domain and returns this"
 function range_from_parentchunks(pc)
     d = domain_from_chunktype(first(pc))
-    @show d
     for c in pc
-        @show domain_from_chunktype(c)
         if domain_from_chunktype(c)!=d
-
             throw(ArgumentError("Supplied parent chunks cover different domains"))
         end
     end
@@ -78,10 +83,12 @@ struct UserOp{F,R,I,FILT,A,KW}
     args::A
     kwargs::KW
 end
+
+
 applyfilter(f::UserOp,myinwork) = map(docheck, f.filters, myinwork)
 apply_function(f::UserOp{<:MutatingFunction},xout,xin) = f.f(xout...,xin...,f.args...;f.kwargs...)
 function apply_function(f::UserOp{<:NonMutatingFunction,Nothing},xout,xin)
-    r = f.f(xin...,f.args...;f.kwargs...)
+    r = f.f.f(xin...,f.args...;f.kwargs...)
     if length(xout) == 1
         first(xout) .= r
     else
@@ -91,13 +98,21 @@ function apply_function(f::UserOp{<:NonMutatingFunction,Nothing},xout,xin)
     end
 end
 function apply_function(f::UserOp{<:NonMutatingFunction,<:Base.Callable},xout,xin)
-    r = f.f(xin...,f.args...;f.kwargs...)
-    f.red(xout...,r)
+    r = f.f.f(xin...,f.args...;f.kwargs...)
+    if length(xout) == 1
+        first(xout)[] = f.red(first(xout)[],r)
+    else
+        rr = f.red(xout,r)
+        foreach(xout,rr) do x,y
+            x.=y
+        end
+    end
 end
 
 struct GMDWop
-    parents
-    mwops
+    inars
+    outars
+    loopranges
     f::UserOp
 end
 
