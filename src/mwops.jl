@@ -25,6 +25,7 @@ end
 
 getdata(c::InputArray) = c.a
 getloopinds(::InputArray{<:Any,<:Any,IL}) where IL = IL 
+getsubndims(::InputArray{<:Any,<:Any,IL}) where IL = length(IL)
 
 
 """
@@ -75,11 +76,12 @@ struct NonMutatingFunction{F}
     f::F
 end
 
-struct UserOp{F,R,I,FILT,A,KW}
+struct UserOp{F,R,I,FILT,FIN,A,KW}
     f::F
     red::R
     init::I
     filters::FILT
+    finalize::FIN
     args::A
     kwargs::KW
 end
