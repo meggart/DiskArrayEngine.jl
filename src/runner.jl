@@ -51,7 +51,7 @@ end
 
 
 @inline function _view(x::ArrayBuffer,I,io)
-    inds = apply_offset.(x.windows[mysub(x,I)...],x.offsets)
+    inds = apply_offset.(x.lw.windows[mysub(x,I)...],x.offsets)
     _view(io, x.a,inds...)
 end
 

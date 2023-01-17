@@ -1,16 +1,15 @@
-struct ArrayBuffer{A,W,O,IL}
+struct ArrayBuffer{A,O,LW}
     a::A
-    windows::W
     offsets::O
-    lr::Val{IL}
+    lw::LW
 end
 
 getdata(c::ArrayBuffer) = c.a
-getloopinds(::ArrayBuffer{<:Any,<:Any,<:Any,IL}) where IL = IL 
+getloopinds(b::ArrayBuffer) = getloopinds(b.lw)
 
 "Determine the needed buffer size for a given Input array and loop ranges lr"
 function getbufsize(ia, lr)
-    map(mysub(ia,lr.chunks),ia.windows.members) do cr,op
+    map(mysub(ia,lr.chunks),ia.lw.windows.members) do cr,op
         maximum(c->internal_size(op[c]),cr)
     end
 end
@@ -51,12 +50,12 @@ function read_range(r,ia,buffer)
     fill!(buffer,zero(eltype(buffer)))
     inds = get_bufferindices(r,ia)
     buffer[Base.OneTo.(length.(inds))...] = ia.a[inds...]
-    ArrayBuffer(buffer,ia.windows,offset_from_range.(inds),ia.lr)
+    ArrayBuffer(buffer,offset_from_range.(inds),ia.lw)
 end
 
 function get_bufferindices(r,ia)
     mywindowrange = mysub(ia,r)
-    map(ia.windows.members,mywindowrange) do w,r
+    map(ia.lw.windows.members,mywindowrange) do w,r
         i = w[r]
         first(first(i)):last(last(i))
     end
@@ -86,7 +85,7 @@ function wrap_outbuffer(r,ia,f,buffer::OutputAggregator)
         (Ref(0),buf)
     end
     n[] = n[]+1 
-    ArrayBuffer(b,ia.windows,offsets,ia.lr)
+    ArrayBuffer(b,offsets,ia.lw)
 end
 
 "Check if maximum number of aggregations has happened for a buffer"

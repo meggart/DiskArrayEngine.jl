@@ -17,15 +17,27 @@ function subset_step_to_chunks(p::ProcessingSteps,cs::ChunkType)
     end
 end
 
-struct InputArray{A,W,IL}
-    a::A
+"""
+Struct specifying the windows of a participating array along each dimension as well as 
+the loop axes where this array participates in the loop
+"""
+struct LoopWindows{W,IL}
     windows::W
     lr::Val{IL}
 end
 
+
+struct InputArray{A,LW<:LoopWindows}
+    a::A
+    lw::LW
+end
+
+
 getdata(c::InputArray) = c.a
-getloopinds(::InputArray{<:Any,<:Any,IL}) where IL = IL 
-getsubndims(::InputArray{<:Any,<:Any,IL}) where IL = length(IL)
+getloopinds(::LoopWindows{<:Any,IL}) where IL = IL 
+getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
+@inline getloopinds(c::InputArray) = getloopinds(c.lw)
+@inline getsubndims(c::InputArray) = getsubndims(c.lw)
 
 
 """
@@ -111,11 +123,38 @@ function apply_function(f::UserOp{<:NonMutatingFunction,<:Base.Callable},xout,xi
     end
 end
 
-struct GMDWop
-    inars
-    outars
-    loopranges
-    f::UserOp
+function getwindowsize(inars, outspecs)
+    d = Dict{Int,Int}()
+    for ia in inars
+      addsize!(ia.lw,d)
+    end
+    for ia in outspecs
+      addsize!(ia,d)
+    end
+    imax = maximum(keys(d))
+    ntuple(i->d[i],imax)
+  end
+  function addsize!(ia,d)
+    map(size(ia.windows),getloopinds(ia)) do s,li
+      if haskey(d,li)
+        if d[li] != s
+          error("Inconsistent Loop windows")
+        end
+      else
+        d[li] = s
+      end
+    end
+  end
+
+struct GMDWop{N,I,O,F<:UserOp}
+    inars::I
+    outspecs::O
+    f::F
+    windowsize::NTuple{N,Int}
+end
+function GMDWop(inars, outspecs, f)
+    s = getwindowsize(inars, outspecs)
+    GMDWop(inars,outspecs, f, s)
 end
 
 
