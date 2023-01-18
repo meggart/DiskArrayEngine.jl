@@ -1,3 +1,4 @@
+"Type very similar to `Iterators.product`, but for indexable arrays."
 struct ProductArray{T,N,S<:Tuple} <:AbstractArray{T,N}
     members::S
 end
@@ -12,6 +13,11 @@ Base.getindex(a::ProductArray{<:Any,N}, i::Vararg{Int, N}) where N = getindex.(a
 
 using Distributed
 
+"""
+Very similar to `pmap` from Distributed. However, in addition one passes an `initfunc` that does some
+initial work on every worker (loading common data etc...). This result of the call to `initfunc` will
+be appended as the last argument to every function call. 
+"""
 function pmap_with_data(f, p::AbstractWorkerPool, c...; initfunc, progress=nothing, kwargs...)
     d = Dict(ip=>remotecall(initfunc, ip) for ip in workers(p))
     allrefs = @spawn d

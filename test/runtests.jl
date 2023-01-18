@@ -1,6 +1,4 @@
 using DiskArrayEngine
 using Test
 
-@testset "DiskArrayEngine.jl" begin
-    # Write your tests here.
-end
+include("test_auxtypes.jl")
