@@ -88,12 +88,13 @@ struct NonMutatingFunction{F}
     f::F
 end
 
-struct UserOp{F,R,I,FILT,FIN,A,KW}
+struct UserOp{F,R,I,FILT,FIN,T,A,KW}
     f::F
     red::R
     init::I
     filters::FILT
     finalize::FIN
+    outtype::T
     args::A
     kwargs::KW
 end

@@ -62,9 +62,10 @@ end
 init = (0,zero(Float64))
 filters = (NoFilter(),)
 fin(x) = last(x)/first(x)
+outtypes = (Union{Float32,Missing},)
 args = ()
 kwargs = (;)
-f = UserOp(mainfunc,reducefunc,init,filters,fin,args,kwargs)
+f = UserOp(mainfunc,reducefunc,init,filters,fin,outtypes,args,kwargs)
 
 optotal = GMDWop(inars, outwindows, f)
 
@@ -80,31 +81,46 @@ getioutspec(::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = ISPEC
 
 Base.size(r::GMWOPResult) = length.(getoutspec(r).windows.members)
 
+function results_as_diskarrays(o::GMDWop;cs=nothing,max_cache=1e9)
+  map(enumerate(o.outspecs)) do (i,outspec)
+    T = o.f.outtype[i]
+    N = ndims(outspec.windows)
+    cs = cs === nothing ? DiskArrays.Unchunked() : cs
+    GMWOPResult{T,N,typeof(o),typeof(cs),i}(o,Val(i),cs,max_cache,size(outspec.windows)) 
+  end
+end
+
+
 function DiskArrays.readblock!(res::GMWOPResult, aout,r::AbstractUnitRange...)
   #Find out directly connected loop ranges
   s = res.op.windowsize
   s = Base.OneTo.(s)
   outars = ntuple(_->nothing,length(res.op.outspecs))
-  outars = Base.setindex(outars,aout,getioutspec(GMWOPResult))
-  outspec = getoutspec(GMWOPResult)
+  outars = Base.setindex(outars,aout,getioutspec(res))
+  outspec = getoutspec(res)
   foreach(getloopinds(outspec),r) do li,ri
     s = Base.setindex(s,ri,li)
   end
   l = length.(s)
+  lres = mysub(outspec,s)  
   @show s,l
+  if length(lres) < length(l) && prod(l)*sizeof(eltype(res)) > res.max_cache
+    l = cut_looprange(l,res.max_cache)
+  end
   loopranges = DiskArrays.GridChunks(l,l,offset = first.(s))
+  @show loopranges
   run_loop(res.op,loopranges,outars)
   nothing
 end
 
+r, = results_as_diskarrays(optotal)
+
+r[300:310,200:210]
+
 ow = optotal.outspecs[1]
 ow.windows.members
 
-function results_as_diskarrays(o::GMDWop;cs=nothing,max_cache=1e9)
-  map(enumerate(o.outspecs)) do i,outspec
-    
-  end
-end
+
 
 
 

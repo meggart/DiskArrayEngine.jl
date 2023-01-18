@@ -92,3 +92,20 @@ end
         innercode(cI,args...)
     end
 end
+
+function run_loop(op, loopranges,outars)
+
+    inbuffers_pure = generate_inbuffers(op.inars, loopranges)
+  
+    outbuffers = generate_outbuffers(outars,f, loopranges)
+  
+    for inow in loopranges
+      @show inow
+      inbuffers_wrapped = read_range.((inow,),inars,inbuffers_pure);
+      outbuffers_now = wrap_outbuffer.((inow,),outars,(f,),outbuffers)
+      DiskArrayEngine.run_block(inow, f, inbuffers_wrapped, outbuffers_now)
+    
+      put_buffer.((inow,), (f,), outbuffers_now, outbuffers, outars)
+    end
+  end
+  

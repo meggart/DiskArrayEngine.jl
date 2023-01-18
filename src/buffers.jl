@@ -9,7 +9,7 @@ getloopinds(b::ArrayBuffer) = getloopinds(b.lw)
 
 "Determine the needed buffer size for a given Input array and loop ranges lr"
 function getbufsize(ia, lr)
-    map(mysub(ia,lr.chunks),ia.lw.windows.members) do cr,op
+    map(mysub(ia,lr.members),ia.lw.windows.members) do cr,op
         maximum(c->internal_size(op[c]),cr)
     end
 end

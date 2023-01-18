@@ -7,5 +7,6 @@ include("buffers.jl")
 include("mwops.jl")
 include("executionplan.jl")
 include("runner.jl")
+include("diskarrayresults.jl")
 
 end
