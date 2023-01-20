@@ -18,21 +18,20 @@ end
 function generate_inbuffers(inars,loopranges)
     map(inars) do ia
         et = eltype(ia.a)
+        #@show loopranges
         Array{et}(undef,getbufsize(ia,loopranges))
     end
 end
 
-array_from_init(::Nothing,ia,bufsize) = zeros(eltype(ia.a),bufsize)
-array_from_init(init::Function,_,bufsize) = map(_->init(),CartesianIndices(bufsize))
-array_from_init(init,_,bufsize) = fill(init,bufsize)
+array_from_init(::Nothing,buftype,bufsize) = zeros(buftype,bufsize)
+array_from_init(init::Base.Callable,buftype,bufsize) = buftype[init() for _ in CartesianIndices(bufsize)]
+array_from_init(init,buftype,bufsize) = buftype[init for _ in CartesianIndices(bufsize)]
 
-buftype_from_init(::Nothing,ia) = eltype(ia.a)
-buftype_from_init(init::Function,_) = typeof(init())
-buftype_from_init(init,_) = typeof(init)
+#buftype_from_init(_,ia) =
 
 "Create buffer for single output"
-function generate_raw_outbuffer(ia,func,bufsize) 
-    array_from_init(func.init,ia,bufsize)
+function generate_raw_outbuffer(ia,init,buftype,bufsize) 
+    array_from_init(init,ia,buftype,bufsize)
 end
 
 bufferrepeat(ia,loopranges) = prod(size(loopranges)) ÷ prod(mysub(ia,size(loopranges)))
@@ -40,7 +39,7 @@ bufferrepeat(ia,loopranges) = prod(size(loopranges)) ÷ prod(mysub(ia,size(loopr
 
 "Creates buffers for all outputs"
 function generate_outbuffers(outars,func,loopranges)
-    generate_outbuffer_collection.(outars,(func,),(loopranges,))
+    generate_outbuffer_collection.(outars,func.init,func.buftype,(loopranges,))
 end
 
 offset_from_range(r) = first(r) .- 1
@@ -67,21 +66,20 @@ struct OutputAggregator{K,V,N}
     nrep::Int
 end
   
-function generate_outbuffer_collection(ia,func,loopranges) 
+function generate_outbuffer_collection(ia,init,buftype,loopranges) 
     nd = getsubndims(ia)
-    et = buftype_from_init(func.init,ia)
     bufsize = getbufsize(ia,loopranges)
     nrep = bufferrepeat(ia,loopranges)
-    d = Dict{NTuple{nd,Int},Tuple{Base.RefValue{Int},Array{et,nd}}}()
+    d = Dict{NTuple{nd,Int},Tuple{Base.RefValue{Int},Array{buftype,nd}}}()
     OutputAggregator(d,bufsize,nrep)
 end
 
 "Wraps output buffer into an ArrayBuffer"
-function wrap_outbuffer(r,ia,f,buffer::OutputAggregator)
+function wrap_outbuffer(r,ia,init,buftype,buffer::OutputAggregator)
     inds = get_bufferindices(r,ia)
     offsets = offset_from_range.(inds)
     n,b = get!(buffer.buffers,offsets) do 
-        buf = generate_raw_outbuffer(ia,f,buffer.bufsize)
+        buf = generate_raw_outbuffer(ia,init,buftype,buffer.bufsize)
         (Ref(0),buf)
     end
     n[] = n[]+1 
@@ -92,11 +90,11 @@ end
 mustwrite(buf, bufdict) = first(bufdict.buffers[buf.offsets])[] == bufdict.nrep
 
 "Checks if output buffers have accumulated to the end and exports to output array"
-function put_buffer(r, f, bufnow, bufferdict, ia)
+function put_buffer(r, fin, bufnow, bufferdict, ia)
   if mustwrite(bufnow,bufferdict)
     inds = get_bufferindices(r,bufnow)
     offsets = offset_from_range.(inds)
-    broadcast!(f.finalize,view(ia.a,inds...),bufnow.a[Base.OneTo.(length.(inds))...])
+    broadcast!(fin,view(ia.a,inds...),bufnow.a[Base.OneTo.(length.(inds))...])
     delete!(bufferdict.buffers,offsets)
     true
   else

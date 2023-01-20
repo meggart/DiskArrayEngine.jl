@@ -12,6 +12,16 @@ Base.axes(a::ProductArray) = first.(axes.(a.members))
 Base.IndexStyle(::Type{<:ProductArray})=Base.IndexCartesian()
 Base.getindex(a::ProductArray{<:Any,N}, i::Vararg{Int, N}) where N = getindex.(a.members,i)
 
+struct MovingWindow <: AbstractVector{UnitRange{Int}}
+  first::Int
+  steps::Int
+  width::Int
+  n::Int
+end
+Base.size(m::MovingWindow) = (m.n,)
+Base.getindex(m::MovingWindow,i::Int) = (m.first+(i-1)*m.steps):(m.first+(i-1)*m.steps+m.width-1)
+  
+
 using Distributed
 
 """

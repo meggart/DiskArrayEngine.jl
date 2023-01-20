@@ -11,7 +11,7 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
   getoutspec(r::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = r.op.outspecs[ISPEC]
   getioutspec(::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = ISPEC
   
-  Base.size(r::GMWOPResult) = length.(getoutspec(r).windows.members)
+  Base.size(r::GMWOPResult) = maximum.(maximum,getoutspec(r).windows.members)
   
   function results_as_diskarrays(o::GMDWop;cs=nothing,max_cache=1e9)
     map(enumerate(o.outspecs)) do (i,outspec)
@@ -29,11 +29,15 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
     s = Base.OneTo.(s)
     outars = ntuple(_->nothing,length(res.op.outspecs))
     outspec = getoutspec(res)
-    outars = Base.setindex(outars,InputArray(OffsetArray(aout,r...),outspec),getioutspec(res))
-    foreach(getloopinds(outspec),r) do li,ri
-      s = Base.setindex(s,ri,li)
+    foreach(getloopinds(outspec),r,outspec.windows.members) do li,ri,w
+      @show li
+      i1 = findfirst(a->maximum(a)>=first(ri),w)
+      i2 = findlast(a->minimum(a)<=last(ri),w)
+      s = Base.setindex(s,i1:i2,li)
     end
+    outars = Base.setindex(outars,InputArray(OffsetArray(aout,r...),outspec),getioutspec(res))
     l = length.(s)
+    @show l
     lres = mysub(outspec,s)  
     if length(lres) < length(l) && prod(l)*sizeof(eltype(res)) > res.max_cache
       l = cut_looprange(l,res.max_cache)

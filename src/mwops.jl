@@ -81,53 +81,7 @@ function range_from_parentchunks(pc)
     d
 end
 
-struct MutatingFunction{F}
-    f::F
-end
-struct NonMutatingFunction{F}
-    f::F
-end
-struct MutatingBlockFunction{F}
-    f::F
-end
-struct NonMutatingBlockFunction{F}
-    f::F
-end
 
-struct UserOp{F,R,I,FILT,FIN,T,A,KW}
-    f::F
-    red::R
-    init::I
-    filters::FILT
-    finalize::FIN
-    outtype::T
-    args::A
-    kwargs::KW
-end
-
-applyfilter(f::UserOp,myinwork) = map(docheck, f.filters, myinwork)
-apply_function(f::UserOp{<:MutatingFunction},xout,xin) = f.f.f(xout...,xin...,f.args...;f.kwargs...)
-function apply_function(f::UserOp{<:NonMutatingFunction,Nothing},xout,xin)
-    r = f.f.f(xin...,f.args...;f.kwargs...)
-    if length(xout) == 1
-        first(xout) .= r
-    else
-        foreach(xout,r) do x,y
-            x.=y
-        end
-    end
-end
-function apply_function(f::UserOp{<:NonMutatingFunction,<:Base.Callable},xout,xin)
-    r = f.f.f(xin...,f.args...;f.kwargs...)
-    if length(xout) == 1
-        first(xout)[] = f.red(first(xout)[],r)
-    else
-        rr = f.red(xout,r)
-        foreach(xout,rr) do x,y
-            x.=y
-        end
-    end
-end
 
 function getwindowsize(inars, outspecs)
     d = Dict{Int,Int}()

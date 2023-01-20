@@ -47,7 +47,7 @@ end
 #We do not make a view when accessing single values
 @inline _view(::Input, a,i::Int...) = a[i...]
 @inline _view(::Any, a,i...) = view(a,i...)
-@inline apply_offset(window,offset) = window.-offset
+@inline apply_offset(window,offset) = window .- offset
 
 
 @inline function _view(x::ArrayBuffer,I,io)
@@ -102,10 +102,10 @@ function run_loop(op, loopranges,outars)
     for inow in loopranges
       @show inow
       inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-      outbuffers_now = wrap_outbuffer.((inow,),outars,(op.f,),outbuffers)
+      outbuffers_now = wrap_outbuffer.((inow,),outars,op.f.init,outbuffers)
       DiskArrayEngine.run_block(inow, op.f, inbuffers_wrapped, outbuffers_now)
     
-      put_buffer.((inow,),(op.f,), outbuffers_now, outbuffers, outars)
+      put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)
     end
   end
   

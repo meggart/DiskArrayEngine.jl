@@ -5,8 +5,8 @@ using Statistics
 
 using Zarr, DiskArrays, OffsetArrays
 using DiskArrayEngine: ProcessingSteps, MWOp, subset_step_to_chunks, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
-  NonMutatingFunction, create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays
+  create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
+  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
@@ -25,48 +25,43 @@ stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(nts)]
 stepveclat = ProcessingSteps(0,1:size(a,2))
 stepveclon = ProcessingSteps(0,1:size(a,1))
 
-#Chunks over the loop indices
-
-
-#First example: Latitudinal mean of monthly average
-o1 = MWOp(eachchunk(a).chunks[1])
-o2 = MWOp(eachchunk(a).chunks[2])
-o3 = MWOp(eachchunk(a).chunks[3],steps=stepvectime)
-
-ops = (o1,o2,o3)
-
-
-
-
-rp = ProductArray((o1.steps,o2.steps,o3.steps))
+rp = ProductArray((stepveclon,stepveclat,stepvectime))
 
 # rangeproduct[3]
-
-
 inars = (InputArray(a,LoopWindows(rp,Val((1,2,3)))),)
 
 
-outsize = length.((stepveclat,stepvectime))
-o1 = MWOp(DiskArrays.RegularChunks(1,0,outsize[1]))
-o2 = MWOp(DiskArrays.RegularChunks(1,0,outsize[2]))
-outrp = ProductArray((o1.steps,o2.steps))
+outrp = ProductArray((stepveclat,stepvectime))
 outwindows = (LoopWindows(outrp,Val((2,3))),)
 
 function myfunc(x)
-    all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
+  all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
 end
 
-mainfunc = NonMutatingFunction(myfunc)
 function reducefunc((n1,s1),(n2,s2))
   (n1+n2,s1+s2)
 end
-init = (0,zero(Float64))
+init = ()->(0,zero(Float64))
 filters = (NoFilter(),)
 fin(x) = last(x)/first(x)
 outtypes = (Union{Float32,Missing},)
 args = ()
 kwargs = (;)
-f = UserOp(mainfunc,reducefunc,init,filters,fin,outtypes,args,kwargs)
+f = create_userfunction(
+  myfunc,
+  Union{Float32,Missing},
+  red = reducefunc, 
+  init = init, 
+  finalize=fin,
+  buftype = Tuple{Float32,Missing},  
+)
+
+optotal = GMDWop(inars, outwindows, f)
+
+
+r, = results_as_diskarrays(optotal)
+rsub = r[300:310,200:210]
+
 
 
 function myfunc!(xout,x)
