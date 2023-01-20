@@ -81,15 +81,15 @@ function innercode(
     end
 end
 
-@noinline function run_block(loopRanges,args...)
+@noinline function run_block(loopRanges,f::UserOp,args...)
     for cI in CartesianIndices(loopRanges)
-        innercode(cI,args...)
+        innercode(cI,f,args...)
     end
 end
 
-@noinline function run_block_threaded(loopRanges,args...)
+@noinline function run_block_threaded(loopRanges,f::UserOp,args...)
     Threads.@threads for cI in CartesianIndices(loopRanges)
-        innercode(cI,args...)
+        innercode(cI,f,args...)
     end
 end
 
@@ -97,15 +97,15 @@ function run_loop(op, loopranges,outars)
 
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
   
-    outbuffers = generate_outbuffers(outars,f, loopranges)
+    outbuffers = generate_outbuffers(outars,op.f, loopranges)
   
     for inow in loopranges
       @show inow
-      inbuffers_wrapped = read_range.((inow,),inars,inbuffers_pure);
-      outbuffers_now = wrap_outbuffer.((inow,),outars,(f,),outbuffers)
-      DiskArrayEngine.run_block(inow, f, inbuffers_wrapped, outbuffers_now)
+      inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+      outbuffers_now = wrap_outbuffer.((inow,),outars,(op.f,),outbuffers)
+      DiskArrayEngine.run_block(inow, op.f, inbuffers_wrapped, outbuffers_now)
     
-      put_buffer.((inow,), (f,), outbuffers_now, outbuffers, outars)
+      put_buffer.((inow,),(op.f,), outbuffers_now, outbuffers, outars)
     end
   end
   

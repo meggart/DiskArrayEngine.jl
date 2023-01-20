@@ -1,3 +1,5 @@
+using DiskArrays: AbstractDiskArray, RegularChunks
+using OffsetArrays: OffsetArray
 
 struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
     op::G

@@ -6,10 +6,11 @@ using Statistics
 using Zarr, DiskArrays, OffsetArrays
 using DiskArrayEngine: ProcessingSteps, MWOp, subset_step_to_chunks, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
   NonMutatingFunction, create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop
+  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
+using OnlineStats
 a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true)
 
 t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true)
@@ -67,92 +68,39 @@ args = ()
 kwargs = (;)
 f = UserOp(mainfunc,reducefunc,init,filters,fin,outtypes,args,kwargs)
 
+
+function myfunc!(xout,x)
+  if !all(ismissing,x) 
+    fit!(xout[],mean(skipmissing(x)))
+  end
+end
+
+mainfunc = DiskArrayEngine.MutatingFunction(myfunc!)
+init = ()->OnlineStats.Mean()
+filters = (NoFilter(),)
+fin(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
+outtypes = (Union{Float32,Missing},)
+args = ()
+kwargs = (;)
+f = UserOp(mainfunc,OnlineStats.merge!,init,filters,fin,outtypes,args,kwargs)
+
+
 optotal = GMDWop(inars, outwindows, f)
 
-struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
-  op::G
-  ires::Val{ISPEC}
-  chunksize::CS
-  max_cache::Float64
-  s::NTuple{N,Int}
-end
-getoutspec(r::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = r.op.outspecs[ISPEC]
-getioutspec(::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = ISPEC
-
-Base.size(r::GMWOPResult) = length.(getoutspec(r).windows.members)
-
-function results_as_diskarrays(o::GMDWop;cs=nothing,max_cache=1e9)
-  map(enumerate(o.outspecs)) do (i,outspec)
-    T = o.f.outtype[i]
-    N = ndims(outspec.windows)
-    cs = cs === nothing ? DiskArrays.Unchunked() : cs
-    GMWOPResult{T,N,typeof(o),typeof(cs),i}(o,Val(i),cs,max_cache,size(outspec.windows)) 
-  end
-end
-
-
-function DiskArrays.readblock!(res::GMWOPResult, aout,r::AbstractUnitRange...)
-  #Find out directly connected loop ranges
-  s = res.op.windowsize
-  s = Base.OneTo.(s)
-  outars = ntuple(_->nothing,length(res.op.outspecs))
-  outars = Base.setindex(outars,aout,getioutspec(res))
-  outspec = getoutspec(res)
-  foreach(getloopinds(outspec),r) do li,ri
-    s = Base.setindex(s,ri,li)
-  end
-  l = length.(s)
-  lres = mysub(outspec,s)  
-  @show s,l
-  if length(lres) < length(l) && prod(l)*sizeof(eltype(res)) > res.max_cache
-    l = cut_looprange(l,res.max_cache)
-  end
-  loopranges = DiskArrays.GridChunks(l,l,offset = first.(s))
-  @show loopranges
-  run_loop(res.op,loopranges,outars)
-  nothing
-end
 
 r, = results_as_diskarrays(optotal)
-
-r[300:310,200:210]
-
-ow = optotal.outspecs[1]
-ow.windows.members
+rsub = r[300:310,200:210]
 
 
 
 
 
-loopranges = DiskArrays.GridChunks(eachchunk(a).chunks[1:2]...,DiskArrays.RegularChunks(120,0,480))
-b = zeros(size(a,2),length(stepvectime));
-outars = (InputArray(b,outwindows),)
-function run_loop(op, loopranges,outars)
-
-  inbuffers_pure = generate_inbuffers(op.inars, loopranges)
-
-  outbuffers = generate_outbuffers(outars,f, loopranges)
-
-  for inow in loopranges
-    @show inow
-    inbuffers_wrapped = read_range.((inow,),inars,inbuffers_pure);
-    outbuffers_now = wrap_outbuffer.((inow,),outars,(f,),outbuffers)
-    DiskArrayEngine.run_block(inow, f, inbuffers_wrapped, outbuffers_now)
-  
-    put_buffer.((inow,), (f,), outbuffers_now, outbuffers, outars)
-  end
-end
-
-
-
-
+loopranges = ProductArray((eachchunk(a).chunks[1:2]...,DiskArrays.RegularChunks(120,0,480)))
+b = zeros(Union{Float32,Missing},size(a,2),length(stepvectime));
+outars = (InputArray(b,outwindows[1]),)
+DiskArrayEngine.run_loop(optotal,loopranges,outars)
 
 b
 
 using Plots
 heatmap(b)
-
-
-
-
-

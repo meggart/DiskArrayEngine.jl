@@ -8,6 +8,7 @@ function ProductArray(members::Tuple)
 end
 Base.size(a::ProductArray,i::Int) = length(a.members[i])
 Base.size(a::ProductArray) = length.(a.members)
+Base.axes(a::ProductArray) = first.(axes.(a.members))
 Base.IndexStyle(::Type{<:ProductArray})=Base.IndexCartesian()
 Base.getindex(a::ProductArray{<:Any,N}, i::Vararg{Int, N}) where N = getindex.(a.members,i)
 

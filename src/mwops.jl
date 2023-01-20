@@ -87,6 +87,12 @@ end
 struct NonMutatingFunction{F}
     f::F
 end
+struct MutatingBlockFunction{F}
+    f::F
+end
+struct NonMutatingBlockFunction{F}
+    f::F
+end
 
 struct UserOp{F,R,I,FILT,FIN,T,A,KW}
     f::F
@@ -99,9 +105,8 @@ struct UserOp{F,R,I,FILT,FIN,T,A,KW}
     kwargs::KW
 end
 
-
 applyfilter(f::UserOp,myinwork) = map(docheck, f.filters, myinwork)
-apply_function(f::UserOp{<:MutatingFunction},xout,xin) = f.f(xout...,xin...,f.args...;f.kwargs...)
+apply_function(f::UserOp{<:MutatingFunction},xout,xin) = f.f.f(xout...,xin...,f.args...;f.kwargs...)
 function apply_function(f::UserOp{<:NonMutatingFunction,Nothing},xout,xin)
     r = f.f.f(xin...,f.args...;f.kwargs...)
     if length(xout) == 1
