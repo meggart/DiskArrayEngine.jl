@@ -102,7 +102,7 @@ function run_loop(op, loopranges,outars)
     for inow in loopranges
       @show inow
       inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-      outbuffers_now = wrap_outbuffer.((inow,),outars,op.f.init,outbuffers)
+      outbuffers_now = wrap_outbuffer.((inow,),outars,op.f.init,op.f.buftype,outbuffers)
       DiskArrayEngine.run_block(inow, op.f, inbuffers_wrapped, outbuffers_now)
     
       put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)

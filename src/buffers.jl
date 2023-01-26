@@ -24,14 +24,15 @@ function generate_inbuffers(inars,loopranges)
 end
 
 array_from_init(::Nothing,buftype,bufsize) = zeros(buftype,bufsize)
-array_from_init(init::Base.Callable,buftype,bufsize) = buftype[init() for _ in CartesianIndices(bufsize)]
+array_from_init(init::Base.Function,buftype,bufsize) = buftype[init() for _ in CartesianIndices(bufsize)]
 array_from_init(init,buftype,bufsize) = buftype[init for _ in CartesianIndices(bufsize)]
 
 #buftype_from_init(_,ia) =
 
 "Create buffer for single output"
-function generate_raw_outbuffer(ia,init,buftype,bufsize) 
-    array_from_init(init,ia,buftype,bufsize)
+function generate_raw_outbuffer(init,buftype,bufsize) 
+    @show buftype
+    array_from_init(init,buftype,bufsize)
 end
 
 bufferrepeat(ia,loopranges) = prod(size(loopranges)) ÷ prod(mysub(ia,size(loopranges)))
@@ -79,7 +80,7 @@ function wrap_outbuffer(r,ia,init,buftype,buffer::OutputAggregator)
     inds = get_bufferindices(r,ia)
     offsets = offset_from_range.(inds)
     n,b = get!(buffer.buffers,offsets) do 
-        buf = generate_raw_outbuffer(ia,init,buftype,buffer.bufsize)
+        buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
         (Ref(0),buf)
     end
     n[] = n[]+1 

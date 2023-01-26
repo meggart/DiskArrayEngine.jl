@@ -27,7 +27,7 @@ end
 BlockFunction(f;mutating=false,dims) = BlockFunction(f,mutating ? Mutating() : NonMutating(),Val(dims))
 getdims(::BlockFunction{<:Any,<:Any,D}) where D = D
 
-tupelize(x,outtypes,_) = map(_->x,outtypes)
+tupelize(x,outtypes,_) = ntuple(_->x,length(outtypes))
 tupelize(x::Tuple,outtypes,s) = length(x)==length(outtypes) || throw(ArgumentError("Length of $s does not equal number of outputs $(length(outtypes))"))
 
 function create_userfunction(
@@ -48,6 +48,7 @@ function create_userfunction(
     init = tupelize(init,outtypes,"init")
     finalize = tupelize(finalize,outtypes,"finalize")
     buftype = tupelize(buftype,outtypes,"buftype")
+    @show buftype
     isa(dims,Int) && (dims = (dims,))
     !isa(filters,Tuple) && (filters = (filters,))
     m = is_mutating ? Mutating() : NonMutating()
@@ -98,7 +99,7 @@ function apply_function(f::UserOp{<:ElementFunction{<:Any,<:NonMutating},Nothing
         end
     end
 end
-function apply_function(f::UserOp{<:ElementFunction{<:Any,<:NonMutating},Base.Callable},xout,xin)
+function apply_function(f::UserOp{<:ElementFunction{<:Any,<:NonMutating},<:Base.Callable},xout,xin)
     r = f.f.f(xin...,f.args...;f.kwargs...)
     if length(xout) == 1
         first(xout)[] = f.red(first(xout)[],r)

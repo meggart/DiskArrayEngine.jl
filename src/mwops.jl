@@ -1,20 +1,14 @@
 using DiskArrays: DiskArrays, ChunkType, GridChunks
 
-struct ProcessingSteps{S,T<:AbstractVector{S}} <: AbstractVector{S}
-    offset::Int
-    v::T
-end
-Base.size(p::ProcessingSteps,i...) = size(p.v,i...)
-Base.getindex(p::ProcessingSteps,i::Int) = p.v[i] .- p.offset
-
 internal_size(p) = last(last(p))-first(first(p))+1
-function subset_step_to_chunks(p::ProcessingSteps,cs::ChunkType)
+function steps_per_chunk(p,cs::ChunkType)
     centers = map(x->(first(x)+last(x))/2,p)
-    map(cs) do r
+    slen = sum(cs) do r
         i1 = searchsortedfirst(centers,first(r))
         i2 = searchsortedlast(centers,last(r))
-        ProcessingSteps(0,view(p.v,i1:i2))
+        length(i1:i2)
     end
+    slen/length(cs)
 end
 
 """
