@@ -30,7 +30,6 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
     outars = ntuple(_->nothing,length(res.op.outspecs))
     outspec = getoutspec(res)
     foreach(getloopinds(outspec),r,outspec.windows.members) do li,ri,w
-      @show li
       i1 = findfirst(a->maximum(a)>=first(ri),w)
       i2 = findlast(a->minimum(a)<=last(ri),w)
       s = Base.setindex(s,i1:i2,li)
@@ -41,9 +40,12 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
     if length(lres) < length(l) && prod(l)*sizeof(eltype(res)) > res.max_cache
       l = cut_looprange(l,res.max_cache)
     end
-    loopranges = ProductArray(map(s,l) do si,cs
-      ProcessingSteps(1-first(si),RegularChunks(cs,0,length(si)))
-    end)
+    loopranges = map(s,l) do si,cs
+      map(RegularChunks(cs,0,length(si)),first(si)-1) do c,offs
+        c.+offs
+      end
+    end
+    loopranges = ProductArray(loopranges)
     run_loop(res.op,loopranges,outars)
     nothing
   end
