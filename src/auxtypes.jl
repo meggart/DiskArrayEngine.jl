@@ -12,6 +12,20 @@ Base.axes(a::ProductArray) = first.(axes.(a.members))
 Base.IndexStyle(::Type{<:ProductArray})=Base.IndexCartesian()
 Base.getindex(a::ProductArray{<:Any,N}, i::Vararg{Int, N}) where N = getindex.(a.members,i)
 
+struct RegularWindows <: AbstractVector{UnitRange{Int}}
+    start::Int
+    stop::Int
+    step::Float64
+    window::Int
+  end
+  RegularWindows(start,stop;window=1,step=window) = RegularWindows(start,stop,step,window)
+  Base.size(r::RegularWindows) = (ceil(Int,(r.stop-r.start+1)/r.step),)
+  function Base.getindex(r::RegularWindows, i::Int)
+    i0 = r.start + floor(Int,(i-1)*r.step)
+    i0 > r.stop && throw(BoundsError(r,i))
+    i0:min((i0+r.window-1),r.stop)
+  end
+
 struct MovingWindow <: AbstractVector{UnitRange{Int}}
   first::Int
   steps::Int

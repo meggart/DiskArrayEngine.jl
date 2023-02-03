@@ -15,33 +15,33 @@ function moduleloadedeverywhere()
     return true
 end
 
-function runLoop(ec::EngineConfig, showprog, use_dist)
-    allRanges = GridChunks(getloopchunks(ec)...)
-    if use_dist
-        #Test if YAXArrays is loaded on all workers:
-        moduleloadedeverywhere() || error(
-            "YAXArrays is not loaded on all workers. Please run `@everywhere using YAXArrays` to fix.",
-        )
-        dcref = @spawn ec
-        prepfunc = ()->getallargs(fetch(dcref))
-        prog = showprog ? Progress(length(allRanges)) : nothing
-        pmap_with_data(allRanges, initfunc=prepfunc, progress=prog) do r, prep
-            incaches, outcaches, args = prep
-            updateinars(ec, r, incaches)
-            run_block(r, args...)
-            writeoutars(ec, r, outcaches)
-        end
-    else
-        incaches, outcaches, args = getallargs(dc)
-        mapfun = showprog ? progress_map : map
-        mapfun(allRanges) do r
-            updateinars(ec, r, incaches)
-            run_block(r, args...)
-            writeoutars(ec, r, outcaches)
-        end
-    end
-    ec.outcubes
-end
+# function runLoop(ec::EngineConfig, showprog, use_dist)
+#     allRanges = GridChunks(getloopchunks(ec)...)
+#     if use_dist
+#         #Test if YAXArrays is loaded on all workers:
+#         moduleloadedeverywhere() || error(
+#             "YAXArrays is not loaded on all workers. Please run `@everywhere using YAXArrays` to fix.",
+#         )
+#         dcref = @spawn ec
+#         prepfunc = ()->getallargs(fetch(dcref))
+#         prog = showprog ? Progress(length(allRanges)) : nothing
+#         pmap_with_data(allRanges, initfunc=prepfunc, progress=prog) do r, prep
+#             incaches, outcaches, args = prep
+#             updateinars(ec, r, incaches)
+#             run_block(r, args...)
+#             writeoutars(ec, r, outcaches)
+#         end
+#     else
+#         incaches, outcaches, args = getallargs(dc)
+#         mapfun = showprog ? progress_map : map
+#         mapfun(allRanges) do r
+#             updateinars(ec, r, incaches)
+#             run_block(r, args...)
+#             writeoutars(ec, r, outcaches)
+#         end
+#     end
+#     ec.outcubes
+# end
 
 
 #We do not make a view when accessing single values

@@ -37,7 +37,7 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
     outars = Base.setindex(outars,InputArray(OffsetArray(aout,r...),outspec),getioutspec(res))
     l = length.(s)
     lres = mysub(outspec,s)
-    if length(lres) < length(l) && prod(l)*sizeof(eltype(res)) > res.max_cache
+    if length(lres) < length(l) && prod(l)*DiskArrays.element_size(res) > res.max_cache
       l = cut_looprange(l,res.max_cache)
     end
     loopranges = map(s,l) do si,cs

@@ -48,7 +48,6 @@ function create_userfunction(
     init = tupelize(init,outtypes,"init")
     finalize = tupelize(finalize,outtypes,"finalize")
     buftype = tupelize(buftype,outtypes,"buftype")
-    @show buftype
     isa(dims,Int) && (dims = (dims,))
     !isa(filters,Tuple) && (filters = (filters,))
     m = is_mutating ? Mutating() : NonMutating()
@@ -75,8 +74,6 @@ function run_block(loopRanges,f::UserOp{<:BlockFunction},xin,xout)
     _run_block(f,myinwork,myoutwork)
 end
 function _run_block(f::UserOp{<:BlockFunction{<:Any,Mutating}},myinwork,myoutwork)
-    @show length(myinwork)
-    @show length(myoutwork)
     f.f.f(myoutwork...,myinwork...,f.args...;f.kwargs...,dims=getdims(f.f))
 end
 function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myoutwork)

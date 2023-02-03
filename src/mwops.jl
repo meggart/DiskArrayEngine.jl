@@ -79,11 +79,8 @@ end
 
 function getwindowsize(inars, outspecs)
     d = Dict{Int,Int}()
-    for ia in inars
+    for ia in (inars...,outspecs...)
       addsize!(ia.lw,d)
-    end
-    for ia in outspecs
-      addsize!(ia,d)
     end
     imax = maximum(keys(d))
     ntuple(i->d[i],imax)

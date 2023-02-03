@@ -3,7 +3,7 @@ using DiskArrayEngine
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Zarr, DiskArrays, OffsetArrays
-using DiskArrayEngine: ProcessingSteps, MWOp, subset_step_to_chunks, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
+using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
   create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
   Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk
 using StatsBase: rle
@@ -31,7 +31,7 @@ inars = (InputArray(a,LoopWindows(rp,Val((1,2,3)))),)
 
 
 outrp = ProductArray((stepveclat,1:length(stepvectime)))
-outwindows = (LoopWindows(outrp,Val((2,3))),)
+outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=false),)
 
 function myfunc(x)
   all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
@@ -59,6 +59,48 @@ f.buftype
 
 optotal = GMDWop(inars, outwindows, f)
 
+DiskArrays.approx_chunksize.(eachchunk(a).chunks)
+
+using OrderedCollections
+
+function kgv(i...)
+  f = LittleDict.(factor.(i))
+  prod((i)->first(i)^last(i),merge(max,f...))
+end
+kgv(i)=i
+kgv(90,60,70)
+
+optires = 1333
+intsizes = 1000
+smax=1_000_000
+find_adjust_candidates
+
+function find_adjust_candidates(optires,smax,intsizes;reltol=0.05,max_order=2)
+  smallest_common = kgv(intsizes...)
+  if optires > smallest_common
+    for ord in 1:max_order 
+      rr = round(Int,optires/smallest_common*ord)
+      if rr<smax && abs(rr-optires/smallest_common*ord)/(optires/smallest_common*ord)<reltol
+        return smallest_common * rr//ord
+      end
+    end
+    #Did not find a better candidate, try rounding
+    if abs(round(Int,optires)-optires)/optires < reltol
+      return round(Int,optires)
+    else
+      return floor(optires)
+    end
+  else
+
+  end
+end
+
+optires = 1333
+intsizes = (1000,)
+smax=1_000_000
+find_adjust_candidates(optires,smax,intsizes,max_order=3)
+
+DiskArrayEngine.optimize_loopranges(optotal,5e8)
 
 r, = results_as_diskarrays(optotal)
 rsub = r[300:310,200:210]
@@ -92,9 +134,6 @@ optotal = GMDWop(inars, outwindows, f)
 r, = results_as_diskarrays(optotal)
 rsub = r[300:310,200:210]
 
-eachchunk(r)
-
-
 
 
 
@@ -117,7 +156,7 @@ function extract_slice(a,cs)
   end
   r
 end
-csvec = 10:90
+csvec = [10:90;95:5:200]
 
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
@@ -126,17 +165,10 @@ xticks!(p,ticvec)
 vline!(p,ticvec)
 
 using DiskArrays: approx_chunksize
+using DiskArrayEngine: RegularWindows
 
 singleread = median([@elapsed a[first(eachchunk(a))...] for _ in 1:10])
-access_per_chunk(cs,window) = cs/window
-function integrated_readtime(app_cs,cs,singleread,window) 
-  acp = access_per_chunk(app_cs,window)
-  if acp < 1.0
-    length(cs)*singleread*(1-0.5*window/maximum(last(cs)))
-  else
-    length(cs)*acp*singleread
-  end
-end
+
 #p = plot(csvec,integrated_readtime.((eachchunk(a).chunks[1],),singleread,csvec))
 #plot!(p,csvec,readtime)
 
@@ -148,50 +180,60 @@ a1 = zcreate(Float32,10000,10000,path = p1, chunks = (10000,1),fill_value=2.0,fi
 a2 = zcreate(Float32,10000,10000,path = p2, chunks = (1,10000),fill_value=5.0,fill_as_missing=false)
 
 
-rp = ProductArray((1:10000,1:10000))
+
+eltype(r)
+
+size(r)
+
+rp = ProductArray((1:10000,DiskArrayEngine.RegularWindows(1,10000,step=3)))
 
 # rangeproduct[3]
 inars = (InputArray(a1,LoopWindows(rp,Val((1,2)))),InputArray(a2,LoopWindows(rp,Val((1,2)))))
 
+outrp = ProductArray(())
+outwindows = ((lw=LoopWindows(outrp,Val(())),chunks=(),ismem=false),)
 
+f = create_userfunction(
+    +,
+    Float64,
+    red = +, 
+    init = 0.0,   
+)
 
-singleread = (1.0,1.0)
-estimate_singleread(ia)=1.0
-arraychunkspec = collect(map(inars) do ia
-  cs = mysub(ia.lw,eachchunk(ia.a).chunks)
-  app_cs = DiskArrays.approx_chunksize.(cs)
-  sr = estimate_singleread(ia)
-  lw = ia.lw
-  elsize = sizeof(eltype(ia.a))
-  (;cs,app_cs,sr,lw,elsize)
-end)
-function time_per_array(spec,window)
-  prod(integrated_readtime.(spec.app_cs,spec.cs,spec.sr,window))
-end
-function bufsize_per_array(spec,window)
-  prod(mysub(spec.lw,window))*spec.elsize
-end
+optotal = GMDWop(inars, outwindows, f)
 
-compute_bufsize(window,chunkspec) = sum(bufsize_per_array.(chunkspec,(window,)))
-window = [1000,1000]
-compute_time(window,chunkspec) = sum(time_per_array.(chunkspec,(window,)))
-all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec),window...)
+DiskArrayEngine.optimize_loopranges(optotal,1e8)
 
 compute_time(window,arraychunkspec)
 compute_bufsize(window,arraychunkspec)
 all_constraints(window,arraychunkspec)
-all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
-
-
 
 using Optimization, OptimizationMOI, OptimizationOptimJL, Ipopt
 using ForwardDiff, ModelingToolkit
-
+window = [1000,1000]
 loopsize = (10000,10000)
-max_cache=1e7
-lb = [0.0,map(_->1.0,window)...]
-ub = [max_cache,loopsize...]
-x0 = [2.0,2.0]
-optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
-prob = OptimizationProblem(optprob, x0, arraychunkspec, lcons = lb, ucons = ub)
-sol = solve(prob, IPNewton())
+
+
+
+
+
+
+
+using BenchmarkTools, Skipper
+
+nanmin(x,y) = isnan(x) ? y : isnan(y) ? x : min(x,y)
+nanmax(x,y) = isnan(x) ? y : isnan(y) ? x : min(x,y)
+
+nanminimum(a;kwargs...) = reduce(nanmin,a;init=NaN,kwargs...)
+nanminimum(f,a;kwargs...) = mapreduce(f,nanmin,a;init=NaN,kwargs...)
+
+x = rand(10000,10);
+nanminimum(x,dims=1)
+
+skip(isnan,x) |> typeof
+
+x[rand(1:length(x),1000)] .= NaN;
+@benchmark reduce(nanmin,$x,dims=2,init=Inf)
+
+
+@benchmark minimum.(skip.(isnan, eachslice($x, dims=2)))
