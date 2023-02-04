@@ -13,6 +13,7 @@ OptimizationMOI = "fd9f6733-72f4-499f-8506-86b2bdd0dea1"
 OptimizationOptimJL = "36348300-93cb-4f02-beb5-3c3902f8871e"
 
 [compat]
+OptimizationOptimJL = "0.1"
 julia = "1"
 
 [extras]
