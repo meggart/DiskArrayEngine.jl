@@ -53,9 +53,9 @@ function read_range(r,ia,buffer)
     ArrayBuffer(buffer,offset_from_range.(inds),ia.lw)
 end
 
-function get_bufferindices(r,ia)
-    mywindowrange = mysub(ia,r)
-    map(ia.lw.windows.members,mywindowrange) do w,r
+function get_bufferindices(r,outspecs)
+    mywindowrange = mysub(outspecs,r)
+    map(outspecs.lw.windows.members,mywindowrange) do w,r
         i = w[r]
         first(first(i)):last(last(i))
     end
@@ -76,15 +76,15 @@ function generate_outbuffer_collection(ia,init,buftype,loopranges)
 end
 
 "Wraps output buffer into an ArrayBuffer"
-function wrap_outbuffer(r,ia,init,buftype,buffer::OutputAggregator)
-    inds = get_bufferindices(r,ia)
+function wrap_outbuffer(r,ia,outspecs,init,buftype,buffer::OutputAggregator)
+    inds = get_bufferindices(r,outspecs)
     offsets = offset_from_range.(inds)
     n,b = get!(buffer.buffers,offsets) do 
         buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
         (Ref(0),buf)
     end
     n[] = n[]+1 
-    ArrayBuffer(b,offsets,ia.lw)
+    ArrayBuffer(b,offsets,outspecs.lw)
 end
 
 "Check if maximum number of aggregations has happened for a buffer"
@@ -95,7 +95,7 @@ function put_buffer(r, fin, bufnow, bufferdict, ia)
   if mustwrite(bufnow,bufferdict)
     inds = get_bufferindices(r,bufnow)
     offsets = offset_from_range.(inds)
-    broadcast!(fin,view(ia.a,inds...),bufnow.a[Base.OneTo.(length.(inds))...])
+    broadcast!(fin,view(ia,inds...),bufnow.a[Base.OneTo.(length.(inds))...])
     delete!(bufferdict.buffers,offsets)
     true
   else

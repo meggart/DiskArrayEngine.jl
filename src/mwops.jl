@@ -30,8 +30,8 @@ end
 getdata(c::InputArray) = c.a
 getloopinds(::LoopWindows{<:Any,IL}) where IL = IL 
 getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
-@inline getloopinds(c::InputArray) = getloopinds(c.lw)
-@inline getsubndims(c::InputArray) = getsubndims(c.lw)
+@inline getloopinds(c) = getloopinds(c.lw)
+@inline getsubndims(c) = getsubndims(c.lw)
 
 
 """
