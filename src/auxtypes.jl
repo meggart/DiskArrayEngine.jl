@@ -64,3 +64,44 @@ struct Input end
 
 "Type used for dispatch to show something is done in output mode"
 struct Output end
+
+
+struct LoopIndSplitter{TR,NTR,BACK}
+end
+threadinds(::LoopIndSplitter{TR},lr) where TR = map(Base.Fix1(getindex,lr),TR)
+nonthreadinds(::LoopIndSplitter{<:Any,NTR},lr) where NTR = map(Base.Fix1(getindex,lr),NTR)
+get_back(::LoopIndSplitter{<:Any,<:Any,B}) where B = B
+function LoopIndSplitter(nd,reddims::Tuple)
+  nonreddims = (setdiff(1:nd,reddims)...,)
+  back = ntuple(nd) do i
+    ir = findfirst(==(i),reddims)
+    if ir !== nothing
+      return (false,ir)
+    else
+      ir = findfirst(==(i),nonreddims)
+      return (true,ir)
+    end
+  end
+  LoopIndSplitter{nonreddims,reddims,back}()
+end
+split_loopranges_threads(lspl,lr) = threadinds(lspl,lr),nonthreadinds(lspl,lr)
+function merge_loopranges_threads(i_tr::CartesianIndex,i_ntr::CartesianIndex,lspl)
+  b = get_back(lspl)
+  map(b) do (is_tr,i)
+    if is_tr
+      i_tr.I[i]
+    else
+      i_ntr.I[i]
+    end
+  end |> CartesianIndex
+end
+get_loopsplitter(op) = get_loopsplitter(length(op.windowsize),op.outspecs)
+function get_loopsplitter(nd,outspecs)
+    alld = 1:nd
+    outreduceinds = map(outspecs) do spec
+      li = getloopinds(spec)
+      setdiff(alld,li)
+    end
+    allreddims = reduce(union!,outreduceinds,init=Int[])
+    LoopIndSplitter(nd,(allreddims...,))
+  end

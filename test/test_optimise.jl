@@ -1,11 +1,12 @@
 @testset "Adjust candidates" begin
+    using DiskArrayEngine: find_adjust_candidates
     optires = 205.3
 intsizes = (30,40,50)
 smax = 1_000_000
-@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol=0.01)==205//1
-@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol=0.05)==200//1
+@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.01,reltol_low=0.01)==205//1
+@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.05,reltol_low=0.05)==200//1
 
-cand = find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol=0.05)
+cand = find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.05,reltol_low=0.05)
 ii = findfirst(ii->rem(cand.num,ii)==0,intsizes)
 
 
@@ -13,8 +14,8 @@ ii = findfirst(ii->rem(cand.num,ii)==0,intsizes)
 optires = 205.3
 intsizes = (20,50)
 smax = 1_000_000
-@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol=0.01)==205//1
-@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol=0.05)==200//1
+@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.01,reltol_low=0.01)==205//1
+@test find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.05,reltol_low=0.05)==200//1
 
 optires = 1300
 intsizes = (1000,)
@@ -39,6 +40,8 @@ intsizes=(90,)
 end
 
 @testset "Loopwindows" begin
+    using DiskArrayEngine: generate_LoopRange
+    using DiskArrays
     using Dates, Test
     ircs = DiskArrays.IrregularChunks(chunksizes = daysinyear.(2000:2020))
     @test generate_LoopRange(365*5//3,ircs) == [1:366,367:975,976:1584,1585:2192,2193:2801,2802:3410,3411:4018,4019:4627,4628:5236,5237:5844,5845:6453,6454:7062,7063:7671]

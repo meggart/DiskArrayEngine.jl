@@ -6,7 +6,7 @@ using Zarr, DiskArrays, OffsetArrays
 using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
   create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
   Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-  find_adjust_candidates, generate_LoopRange
+  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
@@ -65,9 +65,6 @@ f.buftype
 optotal = GMDWop(inars, outwindows, f)
 
 
-fit!(Mean(),skipmissing([missing]))
-
-
 function fit_online!(xout,x,f=identity)
   fit!(xout[],f(x))
 end
@@ -99,13 +96,24 @@ optotal = GMDWop(inars, outwindows, f)
 b = zeros(Union{Float32,Missing},size(a,2),length(stepvectime));
 
 
-
-
-
-function run_op(op,outars;max_cache=1e8)
+function run_op(op,outars;max_cache=1e8,threaded=true)
   lr = DiskArrayEngine.optimize_loopranges(op,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
-  DiskArrayEngine.run_loop(optotal,lr,outars)
+  DiskArrayEngine.run_loop(optotal,lr,outars,threaded=true)
 end
+
+@time run_op(optotal, (b,),threaded=false,max_cache=5e8)
+
+inow = (91:180,631:720,1:480)
+
+optotal.windowsize
+
+abstract type ProcessingGroup end
+
+struct ReducedimsGroup{N}
+  dims::NTuple{N,Int}
+  is_foldl::Bool
+end
+
 
 
 using Plots

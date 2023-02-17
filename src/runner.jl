@@ -81,30 +81,42 @@ function innercode(
     end
 end
 
-@noinline function run_block(loopRanges,f::UserOp,args...)
+function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+    if !threaded
+        run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
+    else
+        lspl = get_loopsplitter(op)
+        run_block_threaded(inow, lspl,op.f, inbuffers_wrapped, outbuffers_now)
+    end
+end
+
+@noinline function run_block_single(loopRanges,f::UserOp,args...)
     for cI in CartesianIndices(loopRanges)
         innercode(cI,f,args...)
     end
 end
 
-@noinline function run_block_threaded(loopRanges,f::UserOp,args...)
-    Threads.@threads for cI in CartesianIndices(loopRanges)
-        innercode(cI,f,args...)
+@noinline function run_block_threaded(loopRanges,lspl,f::UserOp,args...)
+    tri, ntri = split_loopranges_threads(lspl,loopRanges)
+    for i_nonthread in CartesianIndices(ntri)
+        Threads.@threads for i_thread in CartesianIndices(tri)
+            cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+            innercode(cI,f,args...)
+        end
     end
 end
 
-function run_loop(op, loopranges,outars)
+function run_loop(op, loopranges,outars;threaded=true)
 
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
   
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
   
     for inow in loopranges
-      @show inow
+      @debug "inow = ", inow
       inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
       outbuffers_now = wrap_outbuffer.((inow,),outars,op.outspecs,op.f.init,op.f.buftype,outbuffers)
-      DiskArrayEngine.run_block(inow, op.f, inbuffers_wrapped, outbuffers_now)
-    
+      run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
       put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)
     end
   end
