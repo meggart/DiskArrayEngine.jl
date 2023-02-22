@@ -108,11 +108,21 @@ inow = (91:180,631:720,1:480)
 optotal.windowsize
 
 abstract type ProcessingGroup end
+struct RootGroup{LW}
+  lw::LW
+end
 
-struct ReducedimsGroup{N}
+struct ReducedimsGroup{P,N}
+  parent::P
   dims::NTuple{N,Int}
   is_foldl::Bool
 end
+
+struct OverlapGroup{P,N}
+  
+
+end
+
 
 
 

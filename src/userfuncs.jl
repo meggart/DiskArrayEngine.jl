@@ -56,32 +56,7 @@ function create_userfunction(
 end 
 
 
-function run_block(loopRanges,f::UserOp{<:BlockFunction},xin,xout)
-    i1 = first.(loopRanges)
-    i2 = last.(loopRanges)
-    myinwork = map(xin) do x
-        iw1 = apply_offset.(first.(x.lw.windows[mysub(x,i1)...]),x.offsets)
-        iw2 = apply_offset.(last.(x.lw.windows[mysub(x,i2)...]),x.offsets)
-        rr = range.(iw1,iw2)
-        view(x.a, rr...)
-    end
-    myoutwork = map(xout) do x
-        iw1 = apply_offset.(first.(x.lw.windows[mysub(x,i1)...]),x.offsets)
-        iw2 = apply_offset.(last.(x.lw.windows[mysub(x,i2)...]),x.offsets)
-        rr = range.(iw1,iw2)
-        view(x.a, rr...)
-    end
-    _run_block(f,myinwork,myoutwork)
-end
-function _run_block(f::UserOp{<:BlockFunction{<:Any,Mutating}},myinwork,myoutwork)
-    f.f.f(myoutwork...,myinwork...,f.args...;f.kwargs...,dims=getdims(f.f))
-end
-function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myoutwork)
-    r = f.f.f(myinwork...,f.args...;f.kwargs...,dims=getdims(f.f))
-    map(myoutwork,r) do o,ir
-        o .= ir
-    end
-end
+
 
 
 applyfilter(f::UserOp,myinwork) = broadcast(docheck, f.filters, myinwork)

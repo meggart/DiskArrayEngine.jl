@@ -48,14 +48,16 @@ function get_chunkspec(outspec,ot)
             return UndefinedChunks(s)
         end
         if csnow isa Integer
-            csnow = DiskArrays.RegularChunks(csnow,0,s)
+            DiskArrays.RegularChunks(csnow,0,s)
+        else
+          csnow
         end
     end
     app_cs = map(cs,avgs) do csnow,avgsnow
         if csnow isa UndefinedChunks 
             nothing
         else
-            ceil(Int,DiskArrays.approx_chunksize.(csnow) / avgsnow)
+            ceil(Int,DiskArrays.approx_chunksize(csnow) / avgsnow)
         end
     end
     sr = estimate_singleread(outspec)
@@ -66,7 +68,7 @@ function get_chunkspec(outspec,ot)
 end
 
 function get_chunkspec(ia::InputArray)
-    cs = mysub(ia.lw,DiskArrays.eachchunk(ia.a).chunks)
+    cs = DiskArrays.eachchunk(ia.a).chunks
     avgs = avg_step.(ia.lw.windows.members)
     app_cs = ceil.(Int,DiskArrays.approx_chunksize.(cs) ./ avgs)
     sr = estimate_singleread(ia)
@@ -212,8 +214,8 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
     @debug "Adjust candidates: ", adj_cands
     lr = generate_LoopRange.(adj_cands,adj_chunks,tres=3)
     foreach(lr,optotal.windowsize) do l,s
-        @assert first(first(l))==1
-        @assert last(last(l))==s
+        @assert first(first(l))>=1
+        @assert last(last(l))<=s
     end
     ProductArray((lr...,))
   end

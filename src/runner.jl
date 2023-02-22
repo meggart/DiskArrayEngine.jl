@@ -106,6 +106,37 @@ end
     end
 end
 
+function run_block(f::GMDWop{<:Any,<:Any,<:Any,<:UserOp{<:BlockFunction}},loopRanges,xin,xout,threaded)
+    i1 = first.(loopRanges)
+    i2 = last.(loopRanges)
+    myinwork = map(xin) do x
+        firsti = first.(x.lw.windows[mysub(x,i1)...])
+        lasti = last.(x.lw.windows[mysub(x,i2)...])
+        iw1 = apply_offset.(firsti,x.offsets)
+        iw2 = apply_offset.(lasti,x.offsets)
+        rr = range.(iw1,iw2)
+        OffsetArray(view(x.a, rr...),firsti .- 1)
+    end
+    myoutwork = map(xout) do x
+        firsti = first.(x.lw.windows[mysub(x,i1)...])
+        lasti = last.(x.lw.windows[mysub(x,i2)...])
+        iw1 = apply_offset.(firsti,x.offsets)
+        iw2 = apply_offset.(lasti,x.offsets)
+        rr = Base.IdentityUnitRange.(range.(iw1,iw2))
+        OffsetArray(view(x.a, rr...),firsti .- 1)
+    end
+    _run_block(f.f,myinwork,myoutwork,threaded)
+end
+function _run_block(f::UserOp{<:BlockFunction{<:Any,Mutating}},myinwork,myoutwork,threaded)
+    f.f.f(myoutwork...,myinwork...,f.args...;f.kwargs...,dims=getdims(f.f),threaded=threaded)
+end
+function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myoutwork,threaded)
+    r = f.f.f(myinwork...,f.args...;f.kwargs...,dims=getdims(f.f),threaded=threaded)
+    map(myoutwork,r) do o,ir
+        o .= ir
+    end
+end
+
 function run_loop(op, loopranges,outars;threaded=true)
 
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
@@ -116,6 +147,7 @@ function run_loop(op, loopranges,outars;threaded=true)
       @debug "inow = ", inow
       inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
       outbuffers_now = wrap_outbuffer.((inow,),outars,op.outspecs,op.f.init,op.f.buftype,outbuffers)
+      @debug "Axes of wrapped input buffers"
       run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
       put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)
     end

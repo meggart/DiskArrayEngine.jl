@@ -4,9 +4,10 @@ using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Interpolations
 using Zarr, DiskArrays, OffsetArrays
-using DiskArrayEngine: ProcessingSteps, MWOp, subset_step_to_chunks, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
+using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
   create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, MovingWindow, create_userfunction, results_as_diskarrays
+  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
+  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, MovingWindow, RegularWindows
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
@@ -33,45 +34,56 @@ function getinterpinds(r1,r2)
 end
 
 
-
-
-function getinterpsteps(xcoarse,xfine)
-  ifine = 1
+function getallsteps(xcoarse,xfine)
+  interpinds = getinterpinds(xcoarse, xfine)
   resout = UnitRange{Int}[]
-  resin = UnitRange{Int}[]
-  xcs = findfirst(>=(first(xfine)),xcoarse)
-  for xc in xcs:length(xcoarse)-1
-    inew = findnext(>=(xcoarse[xc+1]),xfine,ifine)
-    if inew===nothing
-      push!(resout,ifine:length(xfine))
-      break
-    end
-    push!(resout,ifine:inew)
-    ifine = inew+1
+  icur = 1
+  while icur <= length(interpinds)
+    i1 = floor(interpinds[icur])
+    inext = searchsortedlast(interpinds,i1+1)
+    push!(resout,icur:inext)
+    icur = inext+1
   end
-  resin = MovingWindow(xcs,1,2,length(resout))
-  resin,resout
+
+  resin = DiskArrayEngine.MovingWindow(floor(Int,first(interpinds)),1,2,length(resout))
+  interpinds, resin, resout
 end
 
 
 lons = range(-179.875,179.875,length=1440)
 lats = range(89.875,-89.875,length=720)
 ts = t[:]
+
+newlons = range(-180.0,180.0,length=2881)
+newlats = range(90,-90,length=1441)
 ts
-newts = 100.0:14612
+newts = 366.0:1.0:14615
 
-inds
+conv = (1=>(lons,newlons),2=>(lats,newlats))
+xcoarse = lats
+xfine = newlats
+interpinds = getinterpinds(xcoarse, xfine)
+resout = UnitRange{Int}[]
+icur = 1
+#while icur <= length(interpinds)
+  i1 = floor(interpinds[icur])
+  inext = searchsortedlast(interpinds,i1+1)
+  push!(resout,icur:inext)
+  icur = inext+1
+#end
 
-stepin, stepout = getinterpsteps(ts,newts)
+resin = DiskArrayEngine.MovingWindow(floor(Int,first(interpinds)),1,2,length(resout))
+interpinds, resin, resout
+
+
+getallsteps(lats,newlats)
 
 
 
+allinfo = [k=>getallsteps(v...) for (k,v) in conv]
 
-
-function interpolate_block!(xout, data, nodes...; dims)
+function interpolate_block!(xout, data, nodes...; dims,threaded=false)
   innodes = axes(data)
-  @show axes(xout)
-  @show length(nodes[1])
   isinterp = ntuple(in(dims),ndims(data))
   modes = map(isinterp) do m
     m ? BSpline(Linear()) : NoInterp()
@@ -81,11 +93,6 @@ function interpolate_block!(xout, data, nodes...; dims)
     n,nodes = first(nodes),Base.tail(nodes)
     outnodes = Base.setindex(outnodes,n,d)
   end
-  # @show innodes
-  # @show outnodes[1]
-  # @show outnodes[2]
-  # @show first(outnodes[3]),last(outnodes[3])
-  # @show data
   itp = extrapolate(interpolate(data,modes), Flat())
   fill_nodes!(itp,xout,outnodes)
 end
@@ -101,22 +108,38 @@ f = create_userfunction(interpolate_block!,Union{Float32,Missing},is_blockfuncti
 rp = ProductArray((1:size(a,1),1:size(a,2),stepin))
 inar1 = InputArray(a,LoopWindows(rp,Val((1,2,3))))
 
-inds = getinterpinds(ts,newts)
 rp2 = ProductArray((stepout,))
-inar2 = InputArray(inds,LoopWindows(rp2,Val((3,))))
+inar2 = InputArray(interpinds,LoopWindows(rp2,Val((3,))))
 
 inars = (inar1,inar2)
 
 rpout = ProductArray((1:size(a,1),1:size(a,2),stepout))
-outwindows = (LoopWindows(rpout,Val((1,2,3))),)
+outwindows = ((lw = LoopWindows(rpout,Val((1,2,3))), chunks = eachchunk(outar).chunks, ismem=true),)
 
 optotal = GMDWop(inars, outwindows, f)
 r, = results_as_diskarrays(optotal)
 
 
 rr = r[1000,300,:];
+a[1000,300,:]
 
-plot(rr)
+
+outar = zcreate(Union{Float32,Missing},size(a)[1:2]...,length(newts),
+  path=tempname(),chunks = (90,90,500),fill_value=typemax(Float32))
+
+function run_op(op,outars;max_cache=5e8,threaded=true)
+  lr = DiskArrayEngine.optimize_loopranges(op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
+  DiskArrayEngine.run_loop(optotal,lr,outars,threaded=true)
+end
+
+@time run_op(optotal, (outar,),threaded=false,max_cache=5e8)
+
+using Plots
+
+length(rr)
+
+p = plot(ts,a[1000,300,:])
+plot!(newts,rr)
 
 DiskArrayEngine.getoutspec(r).windows
 
