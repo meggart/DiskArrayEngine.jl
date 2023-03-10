@@ -60,7 +60,6 @@ f = create_userfunction(
   buftype = Tuple{Int,Union{Float32,Missing}},  
 )
 
-f.buftype
 
 optotal = GMDWop(inars, outwindows, f)
 
@@ -93,7 +92,8 @@ rsub = r[300:310,200:210]
 
 outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=true),)
 optotal = GMDWop(inars, outwindows, f)
-b = zeros(Union{Float32,Missing},size(a,2),length(stepvectime));
+b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (100,480),fill_as_missing=true);
+
 
 
 function run_op(op,outars;max_cache=1e8,threaded=true)
@@ -105,23 +105,96 @@ end
 
 inow = (91:180,631:720,1:480)
 
+lr = DiskArrayEngine.optimize_loopranges(optotal,2e8,tol_low=0.2,tol_high=0.05,max_order=2)
+
+outars= (b,)
+
+
+function is_output_chunk_overlap(spec,outar,idim)
+  li = getloopinds(spec)
+  if idim in li
+    ii = findfirst(==(idim),li)
+    loopind = li[ii]
+    cs = eachchunk(outar).chunks[ii]
+    chunkbounds = cumsum(length.(cs))
+    !all(in(chunkbounds),cumsum(length.(lr.members[loopind])))
+  else
+    false
+  end
+end
+function is_output_reducedim(spec,outar,idim)
+  li = getloopinds(spec)
+  !in(idim,li)
+end
+
+function split_dim_reasons(op,lr,outars)
+  ret = ntuple(_->Symbol[],ndims(lr))
+  for (spec,ar) in zip(op.outspecs,outars)
+    foreach(1:ndims(lr)) do idim
+      if is_output_chunk_overlap(spec,ar,idim)
+        push!(ret[idim],:output_chunk)
+      end
+      if is_output_reducedim(spec,ar,idim)
+        push!(ret[idim],:reducedim)
+      end
+    end
+  end
+  ret
+end
+
+spr = split_dim_reasons(optotal,lr,outars)
+allsplits = unique(filter(!isempty,spr))
+
+
+map(i->(i...,),spr)
 optotal.windowsize
+
+reason_priority = Dict(
+  :foldl => 1, 
+  :output_chunk => 2, 
+  :reducedim => 3,
+  :overlapinputs =>4,
+)
+
+optotal
+
+struct GroupLoopDim
+  reasons
+  dims
+end
 
 abstract type ProcessingGroup end
 struct RootGroup{LW}
   lw::LW
 end
+group_n_jobs(g::RootGroup) = length(g.lw)
+group_job_indices(g::RootGroup) = eachindex(g.lw)
+group_job_getindex(g::RootGroup,i) = g.lw[i]
+
+function run_process_group(g::RootGroup, workers, op,loopranges,outars;threaded = true)
+  inbuffers_pure = generate_inbuffers(op.inars, loopranges)
+  
+  outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
+  
+  for inow in loopranges
+    @debug "inow = ", inow
+    inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+    outbuffers_now = wrap_outbuffer.((inow,),outars,op.outspecs,op.f.init,op.f.buftype,outbuffers)
+    @debug "Axes of wrapped input buffers"
+    run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+    put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)
+  end
+end
+
 
 struct ReducedimsGroup{P,N}
   parent::P
   dims::NTuple{N,Int}
   is_foldl::Bool
-end
-
-struct OverlapGroup{P,N}
-  
 
 end
+
+
 
 
 
@@ -196,3 +269,59 @@ using ForwardDiff, ModelingToolkit
 window = [1000,1000]
 loopsize = (10000,10000)
 
+
+
+using Interpolations: Interpolations, weightedindexes, itpinfo, value_weights, InterpGetindex, coefficients, tweight, tcoef, prefilter, 
+  copy_with_padding, prefilter!, degree, prefiltering_system, popwrapper
+
+A_x1 = 1:.1:10
+A_x2 = 1:.5:20
+f(x1, x2) = log(x1+x2)
+A = [f(x1,x2) for x1 in A_x1, x2 in A_x2]
+A[1:2, :] .= NaN
+A[:, 1:2] .= NaN
+
+
+it = BSpline(Cubic(Line(OnGrid())))
+it = BSpline(Linear())
+ret = copy_with_padding(Float64, A, it)
+@which prefilter!(Float64, ret, it)
+
+@which prefilter(tweight(A), tcoef(A), A, it)
+
+sz = size(ret)
+first = true
+#for dim in 1:ndims(ret)
+dim = 1
+M, b = prefiltering_system(Float64, Float64, sz[dim], degree(it))
+popwrapper(ret)
+
+@which Interpolations.A_ldiv_B_md!(popwrapper(ret), M, popwrapper(ret), dim, b)
+#end
+    ret
+
+Apad = prefilter(tweight(A), tcoef(A), A, it)
+
+
+
+@which interpolate(, ,A, it)
+
+
+
+
+itp = interpolate(A, BSpline(Linear()))
+
+x  =(1.5,2.5)
+
+wis = weightedindexes((value_weights,), itpinfo(itp)..., x)
+
+@which coefficients(itp)
+
+InterpGetindex(itp)
+
+@which InterpGetindex(itp)
+
+
+itpgi[wis...]
+
+interp_getindex(A.coeffs, ntuple(_ -> 0, Val(N)), map(indexflag, I)...)

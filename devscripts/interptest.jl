@@ -132,6 +132,8 @@ function run_op(op,outars;max_cache=5e8,threaded=true)
   DiskArrayEngine.run_loop(optotal,lr,outars,threaded=true)
 end
 
+lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
+
 @time run_op(optotal, (outar,),threaded=false,max_cache=5e8)
 
 using Plots
@@ -161,3 +163,15 @@ using Plots
 
 p = plot(newts,rr)
 plot!(p,ts,a[1000,300,:])
+
+
+
+using Zarr, Blosc
+
+data = rand(10000)
+
+srcbuf = Blosc.compress(data)
+
+s1,s2,bs = Blosc.sizes(srcbuf)
+
+Int(bs)
