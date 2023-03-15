@@ -1,6 +1,7 @@
 [deps]
 ArchGDAL = "c9ce4bd3-c3d5-55b8-8973-c0e20141b8c3"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+Blosc = "a74b3585-a348-5f62-a45c-50e91977d574"
 CFTime = "179af706-886a-5703-950a-314cd64e0468"
 Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"

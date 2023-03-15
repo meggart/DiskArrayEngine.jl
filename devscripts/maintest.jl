@@ -6,13 +6,14 @@ using Zarr, DiskArrays, OffsetArrays
 using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
   create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
   Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads
+  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
 using OnlineStats
 using Logging
-global_logger(SimpleLogger(stdout, Logging.Debug))
+using Distributed
+global_logger(SimpleLogger(stdout))
 
 
 a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true)
@@ -92,99 +93,104 @@ rsub = r[300:310,200:210]
 
 outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=true),)
 optotal = GMDWop(inars, outwindows, f)
-b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (100,480),fill_as_missing=true);
+outpath = tempname()
+b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (90,480),fill_as_missing=true,path=outpath);
 
 
 
 function run_op(op,outars;max_cache=1e8,threaded=true)
-  lr = DiskArrayEngine.optimize_loopranges(op,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
-  DiskArrayEngine.run_loop(optotal,lr,outars,threaded=true)
+  lr = DiskArrayEngine.optimize_loopranges(op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
+  r = DiskArrayEngine.LocalRunner(optotal,lr,outars,threaded=threaded)
+  run(r)
 end
 
-@time run_op(optotal, (b,),threaded=false,max_cache=5e8)
+@time run_op(optotal, (b,),threaded=true,max_cache=1e9)
+
+using Plots
+heatmap(b[:,:])
+
+
+struct DistributedRunner{OP,LR,OA,IB,OB}
+  op::OP
+  loopranges::LR
+  outars::OA
+  threaded::Bool
+  inbuffers_pure::IB
+  outbuffers::OB
+  workers::Vector{Int}
+end
+function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
+  oplrref = @spawn (op, loopranges)
+  makeinbuf = ()->begin
+    op, loopranges = fetch(oplrref)
+    generate_inbuffers(op.inars, loopranges)
+  end
+  makeoutbuf = ()->begin
+    op, loopranges = fetch(oplrref)
+    generate_outbuffers(op.outspecs,op.f, loopranges)
+  end
+  allinbuffers = Dict(i=>(@spawnat i makeinbuf()) for i in w)
+  alloutbuffers = Dict(i=>(@spawnat i makeoutbuf()) for i in w)
+  DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,w)
+end
+
+addprocs(2)
+lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
+runner = DistributedRunner(optotal, lr, (b,))
+
+function run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
+  if groupspecs !== nothing && :output_chunk in groupspecs
+    piddir = @spawn tempname()
+  else
+    piddir = nothing
+  end
+  getbuffers = ()->runner,fetch(runner.inbuffers_pure[myid()]),fetch(runner.outbuffers[myid()])
+  pmap_with_data(loopranges,initfunc=getbuffers) do inow,prep
+    @debug "inow = ", inow
+    runner,inbuffers_pure,outbuffers = prep
+    inbuffers_wrapped = read_range.((inow,),runner.op.inars,inbuffers_pure);
+    outbuffers_now = wrap_outbuffer.((inow,),runner.outars,runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,outbuffers)
+    run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
+    put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars, (piddir,))
+  end
+  if groupspecs !== nothing && :reducedim in groupspecs
+    @debug "Merging buffers"
+  end
+end
 
 inow = (91:180,631:720,1:480)
 
-lr = DiskArrayEngine.optimize_loopranges(optotal,2e8,tol_low=0.2,tol_high=0.05,max_order=2)
+lr = DiskArrayEngine.optimize_loopranges(optotal,3e7,tol_low=0.2,tol_high=0.05,max_order=2)
 
 outars= (b,)
 
 
-function is_output_chunk_overlap(spec,outar,idim)
-  li = getloopinds(spec)
-  if idim in li
-    ii = findfirst(==(idim),li)
-    loopind = li[ii]
-    cs = eachchunk(outar).chunks[ii]
-    chunkbounds = cumsum(length.(cs))
-    !all(in(chunkbounds),cumsum(length.(lr.members[loopind])))
-  else
-    false
-  end
+using DiskArrayEngine: get_procgroups
+
+
+
+
+
+
+using Distributed
+addprocs(2)
+workerpool = WorkerPool([2])
+push!(workerpool,3)
+@everywhere function distrtest(i)
+  println(i, " ", myid())
+  sleep(1)
 end
-function is_output_reducedim(spec,outar,idim)
-  li = getloopinds(spec)
-  !in(idim,li)
+r = @async pmap(distrtest, workerpool, 1:100)
+addprocs(2)
+@everywhere function distrtest(i)
+  println(i, " ", myid())
+  sleep(1)
 end
-
-function split_dim_reasons(op,lr,outars)
-  ret = ntuple(_->Symbol[],ndims(lr))
-  for (spec,ar) in zip(op.outspecs,outars)
-    foreach(1:ndims(lr)) do idim
-      if is_output_chunk_overlap(spec,ar,idim)
-        push!(ret[idim],:output_chunk)
-      end
-      if is_output_reducedim(spec,ar,idim)
-        push!(ret[idim],:reducedim)
-      end
-    end
-  end
-  ret
-end
-
-spr = split_dim_reasons(optotal,lr,outars)
-allsplits = unique(filter(!isempty,spr))
+push!(workerpool,4)
+push!(workerpool,5)
 
 
-map(i->(i...,),spr)
-optotal.windowsize
 
-reason_priority = Dict(
-  :foldl => 1, 
-  :output_chunk => 2, 
-  :reducedim => 3,
-  :overlapinputs =>4,
-)
-
-optotal
-
-struct GroupLoopDim
-  reasons
-  dims
-end
-
-abstract type ProcessingGroup end
-struct RootGroup{LW}
-  lw::LW
-end
-group_n_jobs(g::RootGroup) = length(g.lw)
-group_job_indices(g::RootGroup) = eachindex(g.lw)
-group_job_getindex(g::RootGroup,i) = g.lw[i]
-
-function run_process_group(g::RootGroup, workers, op,loopranges,outars;threaded = true)
-  inbuffers_pure = generate_inbuffers(op.inars, loopranges)
-  
-  outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
-  
-  for inow in loopranges
-    @debug "inow = ", inow
-    inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-    outbuffers_now = wrap_outbuffer.((inow,),outars,op.outspecs,op.f.init,op.f.buftype,outbuffers)
-    @debug "Axes of wrapped input buffers"
-    run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-    put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)
-  end
-end
 
 
 struct ReducedimsGroup{P,N}
@@ -193,10 +199,6 @@ struct ReducedimsGroup{P,N}
   is_foldl::Bool
 
 end
-
-
-
-
 
 
 using Plots

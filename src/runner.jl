@@ -137,19 +137,28 @@ function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myout
     end
 end
 
-function run_loop(op, loopranges,outars;threaded=true)
-
+struct LocalRunner{OP,LR,OA,IB,OB}
+    op::OP
+    loopranges::LR
+    outars::OA
+    threaded::Bool
+    inbuffers_pure::IB
+    outbuffers::OB
+end
+function LocalRunner(op,loopranges,outars;threaded=true)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
-  
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
-  
+    LocalRunner(op,loopranges,outars, threaded, inbuffers_pure,outbuffers)
+end
+
+
+function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
     for inow in loopranges
       @debug "inow = ", inow
-      inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-      outbuffers_now = wrap_outbuffer.((inow,),outars,op.outspecs,op.f.init,op.f.buftype,outbuffers)
-      @debug "Axes of wrapped input buffers"
-      run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-      put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars)
+      inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
+      outbuffers_now = wrap_outbuffer.((inow,),runner.outars,runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
+      run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
+      put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars)
     end
-  end
+end
   

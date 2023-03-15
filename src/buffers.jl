@@ -91,7 +91,7 @@ end
 mustwrite(buf, bufdict) = first(bufdict.buffers[buf.offsets])[] == bufdict.nrep
 
 "Checks if output buffers have accumulated to the end and exports to output array"
-function put_buffer(r, fin, bufnow, bufferdict, ia)
+function put_buffer(r, fin, bufnow, bufferdict, ia, piddir)
   if mustwrite(bufnow,bufferdict)
     inds = get_bufferindices(r,bufnow)
     offsets = offset_from_range.(inds)
@@ -101,7 +101,14 @@ function put_buffer(r, fin, bufnow, bufferdict, ia)
     skip2 = max.(0,last.(inds).-i2)
     inds2 = range.(first.(inds).+skip1,last.(inds).-skip2)
     r2 = range.(1 .+ skip1, skip1 .+ length.(inds2))
-    broadcast!(fin,view(ia,inds2...),bufnow.a[r2...])
+    if piddir !== nothing
+        @debug "$(myid()) acquiring lock $piddir to write to $inds2"
+        mkpidlock(piddir,wait=true,stale_age=100) do
+            broadcast!(fin,view(ia,inds2...),bufnow.a[r2...])
+        end
+    else
+        broadcast!(fin,view(ia,inds2...),bufnow.a[r2...])
+    end
     delete!(bufferdict.buffers,offsets)
     true
   else
