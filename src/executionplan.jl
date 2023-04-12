@@ -98,7 +98,7 @@ all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
   
 avg_step(lw) = (last(last(lw))-first(first(lw))+1)/length(lw)
 
-estimate_singleread(ia::InputArray)=1.0
+estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0  
 
 function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2)
@@ -191,7 +191,7 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
   
 
   function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_order=2)
-    inars = optotal.inars
+    inars = filter(!ismem,optotal.inars)
     app_cs = apparent_chunksize.(inars)
   
     r = map(approx_opti.u,1:length(approx_opti.u),optotal.windowsize) do sol,iopt,si
@@ -204,6 +204,7 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
         end
       end
       insizes = DiskArrays.approx_chunksize.(inaxchunks)
+
       cands = find_adjust_candidates(sol,si,insizes;reltol_low=tol_low,reltol_high=tol_high,max_order)
       cands, first(inaxchunks)
     end

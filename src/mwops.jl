@@ -1,4 +1,4 @@
-using DiskArrays: DiskArrays, ChunkType, GridChunks
+using DiskArrays: DiskArrays, ChunkType, GridChunks, AbstractDiskArray
 
 internal_size(p) = last(last(p))-first(first(p))+1
 function steps_per_chunk(p,cs::ChunkType)
@@ -26,7 +26,9 @@ struct InputArray{A,LW<:LoopWindows}
     lw::LW
 end
 
-
+ismem(a::InputArray) = ismem(a.a)
+ismem(::AbstractDiskArray) = false
+ismem(::Any) = true
 getdata(c::InputArray) = c.a
 getloopinds(::LoopWindows{<:Any,IL}) where IL = IL 
 getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
@@ -86,7 +88,7 @@ function getwindowsize(inars, outspecs)
     ntuple(i->d[i],imax)
   end
   function addsize!(ia,d)
-    map(size(ia.windows),getloopinds(ia)) do s,li
+    for (s,li) in zip(size(ia.windows),getloopinds(ia))
       if haskey(d,li)
         if d[li] != s
           error("Inconsistent Loop windows")

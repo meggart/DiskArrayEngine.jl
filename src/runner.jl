@@ -158,7 +158,7 @@ function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=
       inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
       outbuffers_now = wrap_outbuffer.((inow,),runner.outars,runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
       run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
-      put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars)
+      put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
     end
 end
   
