@@ -117,26 +117,54 @@ struct DistributedRunner{OP,LR,OA,IB,OB}
   threaded::Bool
   inbuffers_pure::IB
   outbuffers::OB
-  workers::Vector{Int}
+  workers::CachingPool
 end
 function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
-  oplrref = @spawn (op, loopranges)
-  makeinbuf = ()->begin
-    op, loopranges = fetch(oplrref)
-    generate_inbuffers(op.inars, loopranges)
-  end
-  makeoutbuf = ()->begin
-    op, loopranges = fetch(oplrref)
-    generate_outbuffers(op.outspecs,op.f, loopranges)
-  end
-  allinbuffers = Dict(i=>(@spawnat i makeinbuf()) for i in w)
-  alloutbuffers = Dict(i=>(@spawnat i makeoutbuf()) for i in w)
-  DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,w)
+  # oplrref = @spawn (op, loopranges)
+  # makeinbuf = ()->begin
+  #   op, loopranges = fetch(oplrref)
+  #   generate_inbuffers(op.inars, loopranges)
+  # end
+  # makeoutbuf = ()->begin
+  #   op, loopranges = fetch(oplrref)
+  #   generate_outbuffers(op.outspecs,op.f, loopranges)
+  # end
+  # allinbuffers = Dict(i=>(@spawnat i makeinbuf()) for i in w)
+  # alloutbuffers = Dict(i=>(@spawnat i makeoutbuf()) for i in w)
+  allinbuffers = generate_inbuffers(op.inars, loopranges)
+  alloutbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
+  DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,CachingPool(w))
 end
 
 addprocs(2)
 lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
 runner = DistributedRunner(optotal, lr, (b,))
+
+function schedule(sch,::DistributedRunner,loopdims,loopsub,groupspecs)
+  w = workers(sch.runner.workers)
+  nrunner = length(w)
+  taskstorun = collect(loopsub)
+  tasksrunning = Dict{eltype(taskstorun),CachingPool}()
+  workersavail = RemoteChannel(()->Channel{Int}(length(w)))
+  for iw in w
+    put!(workersavail,iw)
+  end
+  @sync while !(isempty(taskstorun) && isempty(tasksrunning))
+    iw = take!(workersavail)
+    if !isempty(taskstorun)
+      i = popfirst!(taskstorun)
+      lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
+      newpool = CachingPool(iw)
+      newrunner = DistributedRunner(runner.op,runner.loopranges,runner.outars,runner.threaded,runner.inbuffers_pure,runner.outbuffers,)
+      schsub = DiskEngineScheduler(sch.groups,lrsub,newrunner)
+      @async run_group(schsub;groupspecs,workersavail)
+      tasksrunning[i] = newpool
+    else
+      _,ii = findmin(length,tasksrunning)
+      push!(iw,tasksrunning[ii])
+    end
+  end
+end
 
 function run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
   if groupspecs !== nothing && :output_chunk in groupspecs
@@ -144,10 +172,10 @@ function run_loop(runner::DistributedRunner,loopranges = runner.loopranges;group
   else
     piddir = nothing
   end
-  getbuffers = ()->runner,fetch(runner.inbuffers_pure[myid()]),fetch(runner.outbuffers[myid()])
-  pmap_with_data(loopranges,initfunc=getbuffers) do inow,prep
+  cpool = CachingPool(runner.workers)
+  pmap(loopranges,) do inow
     @debug "inow = ", inow
-    runner,inbuffers_pure,outbuffers = prep
+    inbuffers_pure,outbuffers = fetch(runner.inbuffers_pure[myid()]),fetch(runner.outbuffers[myid()])
     inbuffers_wrapped = read_range.((inow,),runner.op.inars,inbuffers_pure);
     outbuffers_now = wrap_outbuffer.((inow,),runner.outars,runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,outbuffers)
     run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
@@ -155,8 +183,11 @@ function run_loop(runner::DistributedRunner,loopranges = runner.loopranges;group
   end
   if groupspecs !== nothing && :reducedim in groupspecs
     @debug "Merging buffers"
+
   end
 end
+
+
 
 inow = (91:180,631:720,1:480)
 
@@ -174,7 +205,7 @@ using DiskArrayEngine: get_procgroups
 
 using Distributed
 addprocs(2)
-workerpool = WorkerPool([2])
+workerpool = CachingPool([2])
 push!(workerpool,3)
 @everywhere function distrtest(i)
   println(i, " ", myid())
@@ -199,7 +230,6 @@ struct ReducedimsGroup{P,N}
   is_foldl::Bool
 
 end
-
 
 using Plots
 heatmap(b)
@@ -327,3 +357,73 @@ InterpGetindex(itp)
 itpgi[wis...]
 
 interp_getindex(A.coeffs, ntuple(_ -> 0, Val(N)), map(indexflag, I)...)
+
+
+using Test
+
+using DiskArrayEngine: LoopIndSplitter, threadinds, nonthreadinds, get_back
+# Define some helper functions
+
+# Create a CartesianIndex from a tuple
+ci(t::Tuple) = CartesianIndex(t...)
+
+# Define some test cases
+
+function test_threadinds()
+  lspl = LoopIndSplitter{(1,3),(2,4),()}()
+  lr = ci((10, 20, 30, 40))
+  @test threadinds(lspl, lr) == (10, 30)
+end
+
+test_threadinds()
+
+function test_nonthreadinds()
+  lspl = LoopIndSplitter{(1,3),(2,4),()}()
+  lr = ci((10, 20, 30, 40))
+  @test nonthreadinds(lspl, lr) == (20, 40)
+end
+
+test_nonthreadinds()
+
+function test_get_back()
+  lspl = LoopIndSplitter{(1,3),(2,4),()}()
+  @test get_back(lspl) == (false, 1), (false, 3), (false, 2), (false, 4)
+end
+
+function test_LoopIndSplitter()
+  lspl = LoopIndSplitter{(),(1,3,4),(2)}(4,(1,3))
+  @test get_back(lspl) == (true, 1), (false, 2), (true, 3), (true, 2)
+end
+
+function test_split_loopranges_threads()
+  lspl = LoopIndSplitter{(1,3),(2,4),()}()
+  lr = ci((10, 20, 30, 40))
+  threads, nonthreads = split_loopranges_threads(lspl, lr)
+  @test threads == ci((10, 30)), ci((20, 40))
+  @test nonthreads == ci((20, 40)), ci((10, 30))
+end
+
+function test_merge_loopranges_threads()
+  lspl = LoopIndSplitter{(1,3),(2,4),()}()
+  i_tr = ci((5, 10))
+  i_ntr = ci((20, 30))
+  @test merge_loopranges_threads(i_tr, i_ntr, lspl) == ci((5, 20, 10, 30))
+end
+
+function test_get_loopsplitter()
+  outspecs = ["1i2o", "2i1o", "2i2o"]
+  nd = 4
+  lspl = get_loopsplitter(nd, outspecs)
+  @test get_back(lspl) == (false, 3), (false, 4), (false, 1), (false, 2)
+end
+
+# Run the tests
+@testset "LoopIndSplitter tests" begin
+  test_threadinds()
+  test_nonthreadinds()
+  test_get_back()
+  test_LoopIndSplitter()
+  test_split_loopranges_threads()
+  test_merge_loopranges_threads()
+  test_get_loopsplitter()
+end

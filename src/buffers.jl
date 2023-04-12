@@ -103,7 +103,7 @@ function put_buffer(r, fin, bufnow, bufferdict, ia, piddir)
     r2 = range.(1 .+ skip1, skip1 .+ length.(inds2))
     if piddir !== nothing
         @debug "$(myid()) acquiring lock $piddir to write to $inds2"
-        mkpidlock(piddir,wait=true,stale_age=100) do
+        mkpidlock(fetch(piddir),wait=true,stale_age=100) do
             broadcast!(fin,view(ia,inds2...),bufnow.a[r2...])
         end
     else

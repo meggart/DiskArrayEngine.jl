@@ -84,7 +84,7 @@ function subset_loopranges(lr, dims, reps)
     ProductArray(mem)
 end
 
-function schedule(sch::DiskEngineScheduler,loopdims,loopsub,groupspecs)
+function schedule(sch::DiskEngineScheduler,::LocalRunner,loopdims,loopsub,groupspecs)
     for i in loopsub
         lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
         schsub = DiskEngineScheduler(sch.groups,lrsub,sch.runner)
@@ -92,7 +92,7 @@ function schedule(sch::DiskEngineScheduler,loopdims,loopsub,groupspecs)
     end
 end
 
-function run_group(sch;groupspecs = nothing)
+function run_group(sch;groupspecs = nothing,workerchannel=nothing)
     #We just run everything if there are no groups left 
     if isempty(sch.groups)
         DiskArrayEngine.run_loop(sch.runner,sch.loopranges;groupspecs)
@@ -100,12 +100,17 @@ function run_group(sch;groupspecs = nothing)
         loopdims = freeloopdims(sch)
         if !isempty(loopdims)
             loopsub = CartesianIndices((map(d->1:length(sch.loopranges.members[d]),loopdims)...,))
-            schedule(sch,loopdims,loopsub,groupspecs)
+            schedule(sch,sch.runner,loopdims,loopsub,groupspecs)
         else 
             g = last(sch.groups)
             gnew = sch.groups[1:end-1]
             schnew = DiskEngineScheduler(gnew,sch.loopranges,sch.runner)
             run_group(schnew,groupspecs = g)
+        end
+    end
+    if workerchannel !== nothing
+        for w in workers(sch.runner.workers)
+            put!(workerchannel,w)
         end
     end
 end

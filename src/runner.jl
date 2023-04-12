@@ -1,49 +1,6 @@
 using Distributed: @spawn, AbstractWorkerPool
 using Base.Cartesian
 
-
-function moduleloadedeverywhere()
-    try
-        isloaded = map(workers()) do w
-            #We try calling a function defined inside this module, thi will error when YAXArrays is not loaded on the remote workers
-            remotecall(() -> true, w)
-        end
-        fetch.(isloaded)
-    catch e
-        return false
-    end
-    return true
-end
-
-# function runLoop(ec::EngineConfig, showprog, use_dist)
-#     allRanges = GridChunks(getloopchunks(ec)...)
-#     if use_dist
-#         #Test if YAXArrays is loaded on all workers:
-#         moduleloadedeverywhere() || error(
-#             "YAXArrays is not loaded on all workers. Please run `@everywhere using YAXArrays` to fix.",
-#         )
-#         dcref = @spawn ec
-#         prepfunc = ()->getallargs(fetch(dcref))
-#         prog = showprog ? Progress(length(allRanges)) : nothing
-#         pmap_with_data(allRanges, initfunc=prepfunc, progress=prog) do r, prep
-#             incaches, outcaches, args = prep
-#             updateinars(ec, r, incaches)
-#             run_block(r, args...)
-#             writeoutars(ec, r, outcaches)
-#         end
-#     else
-#         incaches, outcaches, args = getallargs(dc)
-#         mapfun = showprog ? progress_map : map
-#         mapfun(allRanges) do r
-#             updateinars(ec, r, incaches)
-#             run_block(r, args...)
-#             writeoutars(ec, r, outcaches)
-#         end
-#     end
-#     ec.outcubes
-# end
-
-
 #We do not make a view when accessing single values
 @inline _view(::Input, a,i::Int...) = a[i...]
 @inline _view(::Any, a,i...) = view(a,i...)
