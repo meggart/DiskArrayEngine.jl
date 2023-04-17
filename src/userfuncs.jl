@@ -1,4 +1,5 @@
 
+export create_userfunction
 struct UserOp{F,R,I,FILT,FIN,B,T,A,KW}
     f::F
     red::R

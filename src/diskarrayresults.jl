@@ -1,3 +1,4 @@
+export results_as_diskarrays
 using DiskArrays: AbstractDiskArray, RegularChunks
 using OffsetArrays: OffsetArray
 

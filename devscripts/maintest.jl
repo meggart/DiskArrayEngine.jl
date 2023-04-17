@@ -6,14 +6,15 @@ using Zarr, DiskArrays, OffsetArrays
 using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
   create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
   Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner
+  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
+  merge_outbuffer_collection, DistributedRunner
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
 using OnlineStats
 using Logging
 using Distributed
-global_logger(SimpleLogger(stdout))
+global_logger(SimpleLogger(stdout,Logging.Debug))
 
 
 a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true)
@@ -39,39 +40,87 @@ inars = (InputArray(a,LoopWindows(rp,Val((1,2,3)))),)
 outrp = ProductArray((stepveclat,1:length(stepvectime)))
 outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=false),)
 
-function myfunc(x)
-  all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
+# function myfunc(x)
+#   all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
+# end
+
+# function reducefunc((n1,s1),(n2,s2))
+#   (n1+n2,s1+s2)
+# end
+# init = ()->(0,zero(Float64))
+# filters = (NoFilter(),)
+# fin(x) = last(x)/first(x)
+# outtypes = (Union{Float32,Missing},)
+# args = ()
+# kwargs = (;)
+# f = create_userfunction(
+#   myfunc,
+#   Union{Float32,Missing},
+#   red = reducefunc, 
+#   init = init, 
+#   finalize=fin,
+#   buftype = Tuple{Int,Union{Float32,Missing}},  
+# )
+
+
+# optotal = GMDWop(inars, outwindows, f)
+
+
+# function fit_online!(xout,x,f=identity)
+#   fit!(xout[],f(x))
+# end
+# preproc(x) = mean(skipmissing(x))
+# init = ()->OnlineStats.Mean()
+# filters = (NoFilter(),)
+# fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
+# f = create_userfunction(
+#     fit_online!,
+#     Float64,
+#     is_mutating = true,
+#     red = OnlineStats.merge!, 
+#     init = init, 
+#     finalize=fin_onine,
+#     buftype = Mean,  
+#     args = (preproc,)
+# )
+
+
+
+# r, = results_as_diskarrays(optotal)
+# rsub = r[300:310,200:210]
+
+
+outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=true),)
+outpath = tempname()
+b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (90,480),fill_as_missing=true,path=outpath);
+
+
+
+# function run_op(op,outars;max_cache=1e8,threaded=true)
+#   lr = DiskArrayEngine.optimize_loopranges(op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
+#   r = DiskArrayEngine.LocalRunner(optotal,lr,outars,threaded=threaded)
+#   run(r)
+# end
+
+# @time run_op(optotal, (b,),threaded=true,max_cache=1e9)
+
+# using Plots
+# heatmap(b[:,:])
+
+
+
+
+rmprocs(workers())
+addprocs(2)
+@everywhere begin
+  using DiskArrayEngine, Zarr, OnlineStats
+  function fit_online!(xout,x,f=identity)
+    fit!(xout[],f(x))
+  end
+  preproc(x) = mean(skipmissing(x))
+  init = ()->OnlineStats.Mean()
+  fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
 end
-
-function reducefunc((n1,s1),(n2,s2))
-  (n1+n2,s1+s2)
-end
-init = ()->(0,zero(Float64))
-filters = (NoFilter(),)
-fin(x) = last(x)/first(x)
-outtypes = (Union{Float32,Missing},)
-args = ()
-kwargs = (;)
-f = create_userfunction(
-  myfunc,
-  Union{Float32,Missing},
-  red = reducefunc, 
-  init = init, 
-  finalize=fin,
-  buftype = Tuple{Int,Union{Float32,Missing}},  
-)
-
-
-optotal = GMDWop(inars, outwindows, f)
-
-
-function fit_online!(xout,x,f=identity)
-  fit!(xout[],f(x))
-end
-preproc(x) = mean(skipmissing(x))
-init = ()->OnlineStats.Mean()
-filters = (NoFilter(),)
-fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
 f = create_userfunction(
     fit_online!,
     Float64,
@@ -82,112 +131,15 @@ f = create_userfunction(
     buftype = Mean,  
     args = (preproc,)
 )
-
-
 optotal = GMDWop(inars, outwindows, f)
 
-
-r, = results_as_diskarrays(optotal)
-rsub = r[300:310,200:210]
-
-
-outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=true),)
-optotal = GMDWop(inars, outwindows, f)
-outpath = tempname()
-b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (90,480),fill_as_missing=true,path=outpath);
-
-
-
-function run_op(op,outars;max_cache=1e8,threaded=true)
-  lr = DiskArrayEngine.optimize_loopranges(op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
-  r = DiskArrayEngine.LocalRunner(optotal,lr,outars,threaded=threaded)
-  run(r)
-end
-
-@time run_op(optotal, (b,),threaded=true,max_cache=1e9)
-
-using Plots
-heatmap(b[:,:])
-
-
-struct DistributedRunner{OP,LR,OA,IB,OB}
-  op::OP
-  loopranges::LR
-  outars::OA
-  threaded::Bool
-  inbuffers_pure::IB
-  outbuffers::OB
-  workers::CachingPool
-end
-function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
-  # oplrref = @spawn (op, loopranges)
-  # makeinbuf = ()->begin
-  #   op, loopranges = fetch(oplrref)
-  #   generate_inbuffers(op.inars, loopranges)
-  # end
-  # makeoutbuf = ()->begin
-  #   op, loopranges = fetch(oplrref)
-  #   generate_outbuffers(op.outspecs,op.f, loopranges)
-  # end
-  # allinbuffers = Dict(i=>(@spawnat i makeinbuf()) for i in w)
-  # alloutbuffers = Dict(i=>(@spawnat i makeoutbuf()) for i in w)
-  allinbuffers = generate_inbuffers(op.inars, loopranges)
-  alloutbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
-  DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,CachingPool(w))
-end
-
-addprocs(2)
 lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
 runner = DistributedRunner(optotal, lr, (b,))
+groups = DiskArrayEngine.get_procgroups(runner.op, runner.loopranges, runner.outars)
+sch = DiskArrayEngine.DiskEngineScheduler(groups, runner.loopranges, runner)
+DiskArrayEngine.run_group(sch)
 
-function schedule(sch,::DistributedRunner,loopdims,loopsub,groupspecs)
-  w = workers(sch.runner.workers)
-  nrunner = length(w)
-  taskstorun = collect(loopsub)
-  tasksrunning = Dict{eltype(taskstorun),CachingPool}()
-  workersavail = RemoteChannel(()->Channel{Int}(length(w)))
-  for iw in w
-    put!(workersavail,iw)
-  end
-  @sync while !(isempty(taskstorun) && isempty(tasksrunning))
-    iw = take!(workersavail)
-    if !isempty(taskstorun)
-      i = popfirst!(taskstorun)
-      lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
-      newpool = CachingPool(iw)
-      newrunner = DistributedRunner(runner.op,runner.loopranges,runner.outars,runner.threaded,runner.inbuffers_pure,runner.outbuffers,)
-      schsub = DiskEngineScheduler(sch.groups,lrsub,newrunner)
-      @async run_group(schsub;groupspecs,workersavail)
-      tasksrunning[i] = newpool
-    else
-      _,ii = findmin(length,tasksrunning)
-      push!(iw,tasksrunning[ii])
-    end
-  end
-end
-
-function run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
-  if groupspecs !== nothing && :output_chunk in groupspecs
-    piddir = @spawn tempname()
-  else
-    piddir = nothing
-  end
-  cpool = CachingPool(runner.workers)
-  pmap(loopranges,) do inow
-    @debug "inow = ", inow
-    inbuffers_pure,outbuffers = fetch(runner.inbuffers_pure[myid()]),fetch(runner.outbuffers[myid()])
-    inbuffers_wrapped = read_range.((inow,),runner.op.inars,inbuffers_pure);
-    outbuffers_now = wrap_outbuffer.((inow,),runner.outars,runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,outbuffers)
-    run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
-    put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars, (piddir,))
-  end
-  if groupspecs !== nothing && :reducedim in groupspecs
-    @debug "Merging buffers"
-
-  end
-end
-
-
+r = runner.inbuffers_pure[2] |> fetch;
 
 inow = (91:180,631:720,1:480)
 
@@ -198,10 +150,21 @@ outars= (b,)
 
 using DiskArrayEngine: get_procgroups
 
+using Distributed
+addprocs(2)
+
+@everywhere begin
+
+end
 
 
+data = ()->[1,2,3]
+p = DataPool(workers(),data)
 
-
+pmap(p,1:10) do data,i
+  println(i)
+  sum(data)
+end
 
 using Distributed
 addprocs(2)

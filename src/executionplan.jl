@@ -26,6 +26,11 @@ lwcenters = mean.(lw)
   l = map(cs) do r
     length(searchsortedfirst(lwcenters,first(r)):searchsortedlast(lwcenters,last(r)))
   end
+  l = if all(iszero,l)
+    [1]
+  else
+    filter(!iszero,l)
+  end
   DiskArrays.chunktype_from_chunksizes(l)
 end
 
@@ -193,7 +198,6 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
   function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_order=2)
     inars = filter(!ismem,optotal.inars)
     app_cs = apparent_chunksize.(inars)
-  
     r = map(approx_opti.u,1:length(approx_opti.u),optotal.windowsize) do sol,iopt,si
       inaxchunks = ()
       for ia in 1:length(inars)
@@ -203,8 +207,9 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
           inaxchunks = (inaxchunks...,(app_cs[ia].chunks[ili]))
         end
       end
+      @show inaxchunks
       insizes = DiskArrays.approx_chunksize.(inaxchunks)
-
+      @show sol, si, insizes
       cands = find_adjust_candidates(sol,si,insizes;reltol_low=tol_low,reltol_high=tol_high,max_order)
       cands, first(inaxchunks)
     end

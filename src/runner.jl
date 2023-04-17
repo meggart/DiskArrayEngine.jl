@@ -19,7 +19,7 @@ function innercode(
     f,
     xin,
     xout,
-)
+    )
     #Copy data into work arrays
     myinwork = map(xin) do x
         _view(x, cI.I, Input())
@@ -111,11 +111,76 @@ end
 
 function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
     for inow in loopranges
-      @debug "inow = ", inow
-      inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
-      outbuffers_now = wrap_outbuffer.((inow,),runner.outars,runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
-      run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
-      put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
+        @debug "inow = ", inow
+        inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
+        outbuffers_now = wrap_outbuffer.((inow,),runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
+        run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
+        put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
     end
 end
-  
+
+struct DistributedRunner{OP,LR,OA,IB,OB}
+    op::OP
+    loopranges::LR
+    outars::OA
+    threaded::Bool
+    inbuffers_pure::IB
+    outbuffers::OB
+    workers::CachingPool
+end
+function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
+    inars = op.inars
+    makeinbuf = ()->begin
+        generate_inbuffers(inars, loopranges)
+    end
+    outspecs = op.outspecs
+    f = op.f
+    makeoutbuf = ()->begin
+        generate_outbuffers(outspecs,f, loopranges)
+    end
+    allinbuffers = makeinbuf
+    alloutbuffers = makeoutbuf
+
+    DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,CachingPool(w))
+end
+
+
+function DiskArrayEngine.run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
+    if groupspecs !== nothing && :output_chunk in groupspecs
+        piddir = @spawn tempname()
+    else
+        piddir = nothing
+    end
+    cpool = runner.workers
+    op = runner.op
+    threaded = runner.threaded
+    pmap(cpool,loopranges) do stored, inow
+    #map(loopranges) do inow
+        println("inow = ", inow)
+        @debug "inow = ", inow
+
+        inbuffers_pure,outbuffers = fetch(inbuf[myid()]),fetch(outbuf[myid()])
+        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+        
+        outbuffers_now = wrap_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+
+        put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
+
+    end
+    if groupspecs !== nothing && :reducedim in groupspecs
+        @debug "Merging buffers"
+        collection_merged = foldl(values(runner.outbuffers)) do agg,buffers
+            buf = fetch(buffers)
+            merge_outbuffer_collection.(agg,buf)
+        end
+        @debug "Writing merged buffers"
+        map(collection_merged) do outbuffer
+            for (k,v) in outbuffer.buffers
+                @debug "Writing index $k"
+                put_buffer.((k,),runner.op.f.finalize, v, outbuffer, runner.outars, (piddir,))
+            end
+        end
+    end
+end
+

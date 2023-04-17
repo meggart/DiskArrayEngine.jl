@@ -1,4 +1,5 @@
 using DiskArrays: DiskArrays, ChunkType, GridChunks, AbstractDiskArray
+export InputArray, create_outwindows, GMDWop
 
 internal_size(p) = last(last(p))-first(first(p))+1
 function steps_per_chunk(p,cs::ChunkType)
@@ -25,6 +26,12 @@ struct InputArray{A,LW<:LoopWindows}
     a::A
     lw::LW
 end
+function InputArray(a::AbstractArray;dimsmap = ntuple(identity,ndims(a)),windows = Base.OneTo.(size(a)))
+  length(dimsmap) == ndims(a) || throw(ArgumentError("number is dimensions in loop dimension map not equal to ndims(a)"))
+  length(windows) == ndims(a) || throw(ArgumentError("number of supplied loop windwos not equal to ndims(a)"))
+  lw = LoopWindows(ProductArray(windows),Val((dimsmap...,)))
+  InputArray(a,lw)
+end
 
 ismem(a::InputArray) = ismem(a.a)
 ismem(::AbstractDiskArray) = false
@@ -35,6 +42,10 @@ getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
 @inline getloopinds(c) = getloopinds(c.lw)
 @inline getsubndims(c) = getsubndims(c.lw)
 
+function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base.OneTo.(s), chunks = ntuple(_->nothing,length(s)),ismem=false)
+  outrp = ProductArray(windows)
+  (;lw=LoopWindows(outrp,Val((dimsmap...,))),chunks,ismem)
+end
 
 """
     struct MWOp
