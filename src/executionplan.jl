@@ -126,11 +126,7 @@ function kgv(i...)
   prod((i)->first(i)^last(i),merge(max,f...))
 end
 kgv(i)=i
-kgv(90,60,70)
 
-optires = 1333
-intsizes = 1000
-smax=1_000_000
 
 function is_possible_candidate(cand,smax,optires,reltol_low,reltol_high)
   reltol = cand > optires ? reltol_high : reltol_low
@@ -207,11 +203,14 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
           inaxchunks = (inaxchunks...,(app_cs[ia].chunks[ili]))
         end
       end
-      @show inaxchunks
-      insizes = DiskArrays.approx_chunksize.(inaxchunks)
-      @show sol, si, insizes
-      cands = find_adjust_candidates(sol,si,insizes;reltol_low=tol_low,reltol_high=tol_high,max_order)
-      cands, first(inaxchunks)
+      if !isempty(inaxchunks)
+        insizes = DiskArrays.approx_chunksize.(inaxchunks)
+        cands = find_adjust_candidates(sol,si,insizes;reltol_low=tol_low,reltol_high=tol_high,max_order)
+        cands, first(inaxchunks)
+      else
+        rsol = clamp(round(Int,sol),1,si)
+        rsol//1, RegularChunks(rsol,0,si)
+      end
     end
   
     adj_cands = first.(r)

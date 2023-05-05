@@ -29,7 +29,10 @@ BlockFunction(f;mutating=false,dims) = BlockFunction(f,mutating ? Mutating() : N
 getdims(::BlockFunction{<:Any,<:Any,D}) where D = D
 
 tupelize(x,outtypes,_) = ntuple(_->x,length(outtypes))
-tupelize(x::Tuple,outtypes,s) = length(x)==length(outtypes) || throw(ArgumentError("Length of $s does not equal number of outputs $(length(outtypes))"))
+function tupelize(x::Tuple,outtypes,s) 
+    length(x)==length(outtypes) || throw(ArgumentError("Length of $s does not equal number of outputs $(length(outtypes))"))
+    x
+end
 
 function create_userfunction(
         f,
