@@ -10,5 +10,5 @@ include("executionplan.jl")
 include("runner.jl")
 include("diskarrayresults.jl")
 include("distribute.jl")
-
+include("enginearrays.jl")
 end
