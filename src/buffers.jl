@@ -31,7 +31,6 @@ array_from_init(init,buftype,bufsize) = buftype[init for _ in CartesianIndices(b
 
 "Create buffer for single output"
 function generate_raw_outbuffer(init,buftype,bufsize) 
-    @show buftype
     array_from_init(init,buftype,bufsize)
 end
 
