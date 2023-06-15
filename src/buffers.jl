@@ -104,7 +104,14 @@ function wrap_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
 end
 
 "Check if maximum number of aggregations has happened for a buffer"
-mustwrite(inds,bufdict) = first(bufdict.buffers[inds])[] == bufdict.nrep
+function mustwrite(inds,bufdict) 
+    n_written = first(bufdict.buffers[inds])[]
+    if n_written > bufdict.nrep
+        error("Something is wrong, buffer got wrapped more often than it should. Make sure to use a runner only once")
+    else
+        n_written == bufdict.nrep
+    end
+end
 
 "Checks if output buffers have accumulated to the end and exports to output array"
 function put_buffer(r, fin, bufnow, bufferdict, ia, piddir)
