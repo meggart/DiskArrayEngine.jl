@@ -11,4 +11,5 @@ include("runner.jl")
 include("diskarrayresults.jl")
 include("distribute.jl")
 include("enginearrays.jl")
+include("util/interpolate.jl")
 end

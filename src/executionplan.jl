@@ -1,4 +1,5 @@
-using Ipopt, Optimization, OptimizationMOI, OptimizationOptimJL
+using Ipopt, Optimization
+import OptimizationMOI, OptimizationOptimJL
 using DiskArrays: eachchunk
 using Statistics: mean
 struct UndefinedChunks 
@@ -91,7 +92,7 @@ end
 function bufsize_per_array(spec,window)
     prod(mysub(spec.lw,window))*spec.elsize*spec.windowfac
 end
-  
+
 compute_bufsize(window,_,chunkspec...) = sum(bufsize_per_array.(chunkspec,(window,)))
 function compute_time(window,chunkspec) 
     totsize = first(chunkspec)
