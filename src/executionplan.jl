@@ -28,10 +28,11 @@ lwcenters = mean.(lw)
     length(searchsortedfirst(lwcenters,first(r)):searchsortedlast(lwcenters,last(r)))
   end
   l = if all(iszero,l)
-    [1]
+    ones(Int, length(lw))
   else
     filter(!iszero,l)
   end
+  sum(l) == length(lw) || error("Error in determining apparent chunk sizes")
   DiskArrays.chunktype_from_chunksizes(l)
 end
 
@@ -115,7 +116,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   chunkspecs = (totsize,get_chunkspec.(op.inars)..., get_chunkspec.(op.outspecs,op.f.outtype)...)
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
-  sol = solve(prob, IPNewton())
+  sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
   adjust_loopranges(op,sol;tol_low,tol_high,max_order)
 end
