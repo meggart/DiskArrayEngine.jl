@@ -2,7 +2,7 @@ using DiskArrayEngine, Statistics
 
 
 using Zarr
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/")
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/",fill_as_missing=true)
 
 ae = engine(a)
 
