@@ -19,12 +19,23 @@ lons = range(-179.875,179.875,length=1440)
 lats = range(89.875,-89.875,length=720)
 ts = t[:]
 
-newlons = range(-180.0,180.0,length=2881)
-newlats = range(90,-90,length=1441)
+
+newlons = range(-180.0,180.0,length=4000)
+newlats = range(90,-90,length=2000)
 
 conv = (1=>(lons,newlons),2=>(lats,newlats))
 
 a_interp = interpolate_diskarray(a,conv)
+
+a_interp.op
+
+days = Date(1979,1,1) + Day.(Int.(ts))
+m = month.(days)
+_,x2 = rle(m)
+cums = [0;cumsum(x2)]
+stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(x2)]
+
+newia = InputArray(a_interp, windows)
 
 
 #xcoarse = lats

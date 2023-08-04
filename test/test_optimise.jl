@@ -10,7 +10,6 @@ cand = find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.05
 ii = findfirst(ii->rem(cand.num,ii)==0,intsizes)
 
 
-
 optires = 205.3
 intsizes = (20,50)
 smax = 1_000_000

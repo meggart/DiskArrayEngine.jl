@@ -102,8 +102,10 @@ function compute_time(window,chunkspec)
 end
 all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec...),window...)
 all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
-  
-avg_step(lw) = (last(last(lw))-first(first(lw))+1)/length(lw)
+
+avg_step(lw) = avg_step(lw,get_ordering(lw),get_overlap(lw))
+avg_step(lw,::Union{Increasing,Decreasing},::Any) = mean(diff(first.(lw)))
+avg_step(lw,::Any,::Any) = error("Not implemented")
 
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0  
