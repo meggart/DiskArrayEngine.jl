@@ -29,7 +29,7 @@ end
 function InputArray(a::AbstractArray;dimsmap = ntuple(identity,ndims(a)),windows = Base.OneTo.(size(a)))
   length(dimsmap) == ndims(a) || throw(ArgumentError("number is dimensions in loop dimension map not equal to ndims(a)"))
   length(windows) == ndims(a) || throw(ArgumentError("number of supplied loop windwos not equal to ndims(a)"))
-  lw = LoopWindows(ProductArray(windows),Val((dimsmap...,)))
+  lw = LoopWindows(ProductArray(to_window.(windows)),Val((dimsmap...,)))
   InputArray(a,lw)
 end
 
@@ -43,7 +43,7 @@ getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
 @inline getsubndims(c) = getsubndims(c.lw)
 
 function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base.OneTo.(s), chunks = ntuple(_->nothing,length(s)),ismem=false)
-  outrp = ProductArray(windows)
+  outrp = ProductArray(to_window.(windows))
   (;lw=LoopWindows(outrp,Val((dimsmap...,))),chunks,ismem)
 end
 

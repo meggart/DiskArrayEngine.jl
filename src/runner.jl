@@ -1,4 +1,5 @@
 using Distributed: @spawn, AbstractWorkerPool
+using ProgressMeter: Progress, next!
 using Base.Cartesian
 
 #We do not make a view when accessing single values
@@ -8,7 +9,9 @@ using Base.Cartesian
 
 
 @inline function _view(x::ArrayBuffer,I,io)
-    inds = apply_offset.(x.lw.windows[mysub(x,I)...],x.offsets)
+    ms = mysub(x,I)
+    windowsub = x.lw.windows[ms...]
+    inds = apply_offset.(windowsub,x.offsets)
     _view(io, x.a,inds...)
 end
 
@@ -94,28 +97,33 @@ function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myout
     end
 end
 
-struct LocalRunner{OP,LR,OA,IB,OB}
+struct LocalRunner{OP,LR,OA,IB,OB,P}
     op::OP
     loopranges::LR
     outars::OA
     threaded::Bool
     inbuffers_pure::IB
     outbuffers::OB
+    progress::P
 end
-function LocalRunner(op,loopranges,outars;threaded=true)
+function LocalRunner(op,loopranges,outars;threaded=true,showprogress=true)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
-    LocalRunner(op,loopranges,outars, threaded, inbuffers_pure,outbuffers)
+    pm = showprogress ? Progress(length(loopranges)) : nothing
+    LocalRunner(op,loopranges,outars, threaded, inbuffers_pure,outbuffers,pm)
 end
 
+update_progress!(::Nothing) = nothing
+update_progress!(pm) = next!(pm)
 
 function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
     for inow in loopranges
         @debug "inow = ", inow
         inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
-        outbuffers_now = wrap_outbuffer.((inow,),runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
+        outbuffers_now = extract_outbuffer.((inow,),(loopranges,),runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
         run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
         put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
+        update_progress!(runner.progress)
     end
 end
 

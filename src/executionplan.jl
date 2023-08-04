@@ -1,4 +1,5 @@
-using Ipopt, Optimization, OptimizationMOI, OptimizationOptimJL
+using Ipopt, Optimization
+import OptimizationMOI, OptimizationOptimJL
 using DiskArrays: eachchunk
 using Statistics: mean
 struct UndefinedChunks 
@@ -27,10 +28,11 @@ lwcenters = mean.(lw)
     length(searchsortedfirst(lwcenters,first(r)):searchsortedlast(lwcenters,last(r)))
   end
   l = if all(iszero,l)
-    [1]
+    ones(Int, length(lw))
   else
     filter(!iszero,l)
   end
+  sum(l) == length(lw) || error("Error in determining apparent chunk sizes")
   DiskArrays.chunktype_from_chunksizes(l)
 end
 
@@ -91,7 +93,7 @@ end
 function bufsize_per_array(spec,window)
     prod(mysub(spec.lw,window))*spec.elsize*spec.windowfac
 end
-  
+
 compute_bufsize(window,_,chunkspec...) = sum(bufsize_per_array.(chunkspec,(window,)))
 function compute_time(window,chunkspec) 
     totsize = first(chunkspec)
@@ -100,8 +102,10 @@ function compute_time(window,chunkspec)
 end
 all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec...),window...)
 all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
-  
-avg_step(lw) = (last(last(lw))-first(first(lw))+1)/length(lw)
+
+avg_step(lw) = avg_step(lw,get_ordering(lw),get_overlap(lw))
+avg_step(lw,::Union{Increasing,Decreasing},::Any) = mean(diff(first.(lw)))
+avg_step(lw,::Any,::Any) = error("Not implemented")
 
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0  
@@ -114,7 +118,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   chunkspecs = (totsize,get_chunkspec.(op.inars)..., get_chunkspec.(op.outspecs,op.f.outtype)...)
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
-  sol = solve(prob, IPNewton())
+  sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
   adjust_loopranges(op,sol;tol_low,tol_high,max_order)
 end

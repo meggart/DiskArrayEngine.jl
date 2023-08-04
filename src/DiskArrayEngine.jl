@@ -1,7 +1,7 @@
 module DiskArrayEngine
 
 include("auxtypes.jl")
-include("PickAxisArrays.jl")
+include("windows.jl")
 include("filters.jl")
 include("buffers.jl")
 include("userfuncs.jl")
@@ -11,4 +11,5 @@ include("runner.jl")
 include("diskarrayresults.jl")
 include("distribute.jl")
 include("enginearrays.jl")
+include("util/interpolate.jl")
 end

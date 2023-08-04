@@ -31,12 +31,50 @@ array_from_init(init,buftype,bufsize) = buftype[init for _ in CartesianIndices(b
 
 "Create buffer for single output"
 function generate_raw_outbuffer(init,buftype,bufsize) 
-    @show buftype
     array_from_init(init,buftype,bufsize)
 end
 
-bufferrepeat(ia,loopranges) = prod(size(loopranges)) ÷ prod(mysub(ia,size(loopranges)))
+compute_repeat(w,l,i) = compute_repeat(get_overlap(w),w,l,i)
+compute_repeat(::NonOverlapping,_,_,_) = 1
+compute_repeat(::Overlapping,_,_,_) = error("Not implemented yet")
+function compute_repeat(::Repeating,w,l,i)
+    i_current_looprange = findfirst(isequal(i),l)
+    w1 = w[first(i)]
+    first_window_occurrence = findfirst(==(w1),w)
+    n_before = if first_window_occurrence < first(i)
+        firstaffectedlooprange = findfirst(i->in(first_window_occurrence,i),l)
+        i_current_looprange - firstaffectedlooprange
+    else
+        0
+    end
+    w2 = w[last(i)]
+    last_window_occurrence = findlast(==(w2),w)
+    n_after = if last_window_occurrence > last(i)
+        lastaffectedlooprange = findlast(i->in(last_window_occurrence,i),l)
+        lastaffectedlooprange - i_current_looprange
+    else
+        0
+    end
+    return 1+n_before+n_after
+end
 
+"""
+Compute how often a buffer needs to be passed to the computation before it can be flushed to the
+output array
+"""
+function bufferrepeat(ind,loopranges,lw) 
+    # Repeats because a dimension is missing from the loop
+    baserep = prod(size(loopranges)) ÷ prod(mysub(lw,size(loopranges)))
+    windowmembers = lw.windows.members
+    mylr = mysub(lw,loopranges.members)
+    myind = mysub(lw,ind)
+    @assert length(windowmembers) == length(mylr)
+    innerrepeat = map(windowmembers,mylr,myind) do w,l,i
+        r = compute_repeat(w,l,i)
+        r
+    end
+    baserep * prod(innerrepeat)
+end
 
 "Creates buffers for all outputs"
 function generate_outbuffers(outars,func,loopranges)
@@ -69,43 +107,50 @@ get_bufferindices(r::BufferIndex,_) = r
 struct OutputAggregator{K,V,N}
     buffers::Dict{K,V}
     bufsize::NTuple{N,Int}
-    nrep::Int
 end
 
 
 function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,f)
     @assert o1.bufsize == o2.bufsize
-    @assert o1.nrep == o2.nrep
     o3 = merge!(o1.buffers,o2.buffers) do ((n1,b1),(n2,b2))
         @assert b1.offsets == b2.offsets
         @assert b1.lw == b2.lw
         Ref(n1[]+n2[]),f.red.(b1.a,b2.a)
     end
-    OutputAggregator(o3,o1.bufsize,o1.nrep)
+    OutputAggregator(o3,o1.bufsize)
 end
   
 function generate_outbuffer_collection(ia,init,buftype,loopranges) 
     nd = getsubndims(ia)
     bufsize = getbufsize(ia,loopranges)
-    nrep = bufferrepeat(ia,loopranges)
-    d = Dict{BufferIndex{nd},Tuple{Base.RefValue{Int},Array{buftype,nd}}}()
-    OutputAggregator(d,bufsize,nrep)
+    d = Dict{BufferIndex{nd},Tuple{Base.RefValue{Int},Int,ArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(ia.lw)}}}()
+    OutputAggregator(d,bufsize)
 end
 
-"Wraps output buffer into an ArrayBuffer"
-function wrap_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
+"Extracts or creates output buffer as an ArrayBuffer"
+function extract_outbuffer(r,lr,outspecs,init,buftype,buffer::OutputAggregator)
     inds = get_bufferindices(r,outspecs)
     offsets = offset_from_range(inds)
-    n,b = get!(buffer.buffers,inds) do 
+    n,ntot,b = get!(buffer.buffers,inds) do 
         buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
-        (Ref(0),buf)
+        buf = ArrayBuffer(buf,offsets,outspecs.lw)
+        ntot = bufferrepeat(r,lr,outspecs.lw)
+        (Ref(0),ntot,buf)
     end
     n[] = n[]+1 
-    ArrayBuffer(b,offsets,outspecs.lw)
+    b
 end
 
+
 "Check if maximum number of aggregations has happened for a buffer"
-mustwrite(inds,bufdict) = first(bufdict.buffers[inds])[] == bufdict.nrep
+function mustwrite(inds,bufdict) 
+    n_written,ntot,_ = bufdict.buffers[inds]
+    if n_written[] > ntot
+        error("Something is wrong, buffer got wrapped more often than it should. Make sure to use a runner only once")
+    else
+        n_written[] == ntot
+    end
+end
 
 "Checks if output buffers have accumulated to the end and exports to output array"
 function put_buffer(r, fin, bufnow, bufferdict, ia, piddir)

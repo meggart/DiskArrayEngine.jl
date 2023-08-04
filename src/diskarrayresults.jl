@@ -46,6 +46,7 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
         c.+offs
       end
     end
+    @show loopranges
     loopranges = ProductArray(loopranges)
     runner = LocalRunner(res.op,loopranges,outars)
     run_loop(runner)
