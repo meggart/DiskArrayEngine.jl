@@ -12,11 +12,6 @@ DiskArrays.writeblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.writ
 Base.size(a::EngineArray) = size(a.parent)
 DiskArrays.eachchunk(a::EngineArray) = DiskArrays.eachchunk(a.parent)
 
-using Zarr
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/")
-
-ae = EngineArray(a)
-
 function collect_bcdims(A)
     o = Set{Tuple{Int,Int}}()
     for a in A
@@ -84,14 +79,64 @@ function compute(a::DiskArrayEngine.GMWOPResult)
     ret
 end
 
-r = minimum(ae,dims=3,skipmissing=true)
+1
 
-@time r[1000,720]
+using Zarr
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/")
 
+using NetCDF
+a = NetCDF.open("../../../Documents/data/C3S-LC-L4-LCCS-Map-300m-P1Y-2020-v2.1.1.nc","lccs_class")
+
+ae = EngineArray(a)
+
+r = minimum(ae,dims=2,skipmissing=true)
+
+r[1000]
 
 @time aa = compute(r)
 
 using Plots
 heatmap(reverse(permutedims(aa),dims=1))
 
+struct EngineStyle{N} <: Base.Broadcast.AbstractArrayStyle{N} end
+
+Base.BroadcastStyle(::EngineStyle{N}, ::EngineStyle{M}) where {N,M} = EngineStyle{max(N, M)}()
+function Base.BroadcastStyle(::EngineStyle{N}, ::Base.Broadcast.DefaultArrayStyle{M}) where {N,M}
+    return EngineStyle{max(N, M)}()
+end
+function Base.BroadcastStyle(::Base.Broadcast.DefaultArrayStyle{M}, ::EngineStyle{N}) where {N,M}
+    return EngineStyle{max(N, M)}()
+end
+Base.BroadcastStyle(T::Type{<:$t}) = ChunkStyle{ndims(T)}()
+#Base.Broadcast.combine_eltypes(bcf.f, bcf.args)
+
+
+function Base.copy(bc::Broadcasted{ChunkStyle{N}}) where {N}
+    s, bcd = collect_bcdims(A)
+    nd = N
+    ia = map(A) do ar
+        InputArray(ar.parent,dimsmap = ar.bcdims[])
+    end
+    top = Base.Broadcast.combine_eltypes(bcf.f, bcf.args)
+    func = create_userfunction(f,top,red=op,init=init,buftype=top)
+    if dims === Colon()
+        dims = ntuple(identity,nd)
+    end
+    outdims = setdiff(ntuple(identity,nd),dims)
+    outsize = (s[outdims]...,)
+    # outar = zeros(top,outsize)
+    outwindows = (create_outwindows(outsize,dimsmap=(outdims...,)),)
+    op = GMDWop(ia, outwindows, func)
+    first(results_as_diskarrays(op))
+end
+
+function Base.copyto!(dest::AbstractArray, bc::Broadcasted{ChunkStyle{N}}) where {N}
+    bcf = flatten(bc)
+
+    argssub = map(i -> subsetarg(i, cnow), bcf.args)
+    dest[cnow...] .= bcf.f.(argssub...)
+    return dest
+end
+
+# DiskArrays interface
 
