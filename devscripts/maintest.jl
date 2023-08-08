@@ -16,14 +16,15 @@ using Logging
 using Distributed
 #global_logger(SimpleLogger(stdout,Logging.Debug))
 #global_logger(SimpleLogger(stdout))
+using LoggingExtras
 
 
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true)
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true);
 
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true)
-tvec = timedecode(t[:],t.attrs["units"])
-years, nts = rle(yearmonth.(tvec))
-nts
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true);
+tvec = timedecode(t[:],t.attrs["units"]);
+years, nts = rle(yearmonth.(tvec));
+nts;
 
 #cums = [0;cumsum(nts)]
 function outrepfromrle(nts)
@@ -42,17 +43,17 @@ end
 #length.(stepvectime)
 
 
-stepveclat = 1:size(a,2)
-stepveclon = 1:size(a,1)
-outsteps = outrepfromrle(nts)
+stepveclat = 1:size(a,2);
+stepveclon = 1:size(a,1);
+outsteps = outrepfromrle(nts);
 
 
 
 # rangeproduct[3]
 
-inars = (InputArray(a),)
+inars = (InputArray(a),);
 
-outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outsteps)),)
+outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outsteps)),);
 
 outpath = tempname()
 b = zzeros(Float32,size(a,2),length(outsteps),chunks = (90,480),fill_as_missing=true,path=outpath);
@@ -61,10 +62,10 @@ function fit_online!(xout,x,f=identity)
   fx = f(x)
   ismissing(fx) || fit!(xout[],f(x))
 end
-preproc(x) = mean(skipmissing(x))
-init = ()->OnlineStats.Mean()
-filters = (NoFilter(),)
-fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
+preproc(x) = mean(skipmissing(x));
+init = ()->OnlineStats.Mean();
+filters = (NoFilter(),);
+fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x);
 f = create_userfunction(
     fit_online!,
     Float64,
@@ -76,23 +77,63 @@ f = create_userfunction(
 #    args = (preproc,)
 )
 
-optotal = GMDWop(inars, outars, f)
+optotal = GMDWop(inars, outars, f);
 
-r,  = results_as_diskarrays(optotal)
-
-
-
-r[2:3,300]
+r,  = results_as_diskarrays(optotal);
 
 
-lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
-lr = ProductArray((RegularChunks(15,0,50),lr.members[2:3]...))
 
-out = zeros(Union{Float32,Missing},720,480)
-runner = LocalRunner(optotal,lr,(out,),threaded=true)
+lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
+chunks = getproperty.(lr.members,:cs)[2:3];
+
+out1 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
+
+rmprocs(workers())
+addprocs(4,exeflags="--project=$(@__DIR__)")
+@everywhere begin
+  using Revise
+using DiskArrayEngine
+using DiskArrays: ChunkType, RegularChunks
+using Statistics
+using Zarr, DiskArrays, OffsetArrays
+using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
+  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
+  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
+  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
+  merge_outbuffer_collection, DistributedRunner
+using StatsBase: rle
+using CFTime: timedecode
+using Dates
+using OnlineStats
+using Logging
+using Distributed
+  include("daggertest.jl")
+  function fit_online!(xout,x,f=identity)
+    fx = f(x)
+    ismissing(fx) || fit!(xout[],f(x))
+  end
+  preproc(x) = mean(skipmissing(x))
+
+  using Logging
+
+  global_logger(ConsoleLogger())
+end
+runner1 = DaggerRunner(optotal,lr,(out1,),threaded=true);
+run(runner1);
 
 
-@profview run(runner)
+
+# out2 = zeros(Union{Float32,Missing},720,480)
+# runner2 = LocalRunner(optotal,lr,(out2,),threaded=true)
+# run(runner2)
+
+
+using Plots
+heatmap(out1[:,:])
+
+error()
+out1[:,:]
+
 
 
 # function myfunc(x)

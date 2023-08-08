@@ -76,7 +76,7 @@ function bufferrepeat(ind,loopranges,lw)
     baserep * prod(innerrepeat)
 end
 
-"Creates buffers for all outputs"
+"Creates buffers for all outputs, results in a tuple of Dicts holding the collection for each output"
 function generate_outbuffers(outars,func,loopranges)
     generate_outbuffer_collection.(outars,func.init,func.buftype,(loopranges,))
 end
@@ -112,10 +112,11 @@ end
 
 function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,f)
     @assert o1.bufsize == o2.bufsize
-    o3 = merge!(o1.buffers,o2.buffers) do ((n1,b1),(n2,b2))
+    o3 = merge(o1.buffers,o2.buffers) do ((n1,ntot1,b1),(n2,ntot2,b2))
         @assert b1.offsets == b2.offsets
         @assert b1.lw == b2.lw
-        Ref(n1[]+n2[]),f.red.(b1.a,b2.a)
+        @assert ntot1 == ntot2
+        Ref(n1[]+n2[]),ntot1,f.red.(b1.a,b2.a)
     end
     OutputAggregator(o3,o1.bufsize)
 end

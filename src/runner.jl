@@ -46,6 +46,7 @@ function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
         run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
     else
         lspl = get_loopsplitter(op)
+        @debug "Using $lspl to split loops"
         run_block_threaded(inow, lspl,op.f, inbuffers_wrapped, outbuffers_now)
     end
 end
@@ -126,6 +127,7 @@ function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=
         update_progress!(runner.progress)
     end
 end
+
 
 struct DistributedRunner{OP,LR,OA,IB,OB}
     op::OP
