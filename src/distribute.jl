@@ -84,7 +84,7 @@ function subset_loopranges(lr, dims, reps)
     ProductArray(mem)
 end
 
-function schedule(sch::DiskEngineScheduler,::LocalRunner,loopdims,loopsub,groupspecs)
+function schedule(sch::DiskEngineScheduler,::Any,loopdims,loopsub,groupspecs)
     for i in loopsub
         lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
         schsub = DiskEngineScheduler(sch.groups,lrsub,sch.runner)
@@ -120,6 +120,8 @@ function Base.run(runner::LocalRunner)
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
     run_group(sch)
 end
+
+
 
 function DiskArrayEngine.schedule(sch,::DistributedRunner,loopdims,loopsub,groupspecs)
     w = workers(sch.runner.workers)

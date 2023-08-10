@@ -3,11 +3,11 @@ using DiskArrayEngine
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Zarr, DiskArrays, OffsetArrays
-using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
-  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
-  merge_outbuffer_collection, DistributedRunner
+#using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
+#  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
+#  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
+#  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
+#  merge_outbuffer_collection, DistributedRunner
 using StatsBase: rle
 using CFTime: timedecode
 using Dates
@@ -18,6 +18,7 @@ using Distributed
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
 
+using Test
 
 a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true);
 
@@ -58,68 +59,65 @@ outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outst
 outpath = tempname()
 b = zzeros(Float32,size(a,2),length(outsteps),chunks = (90,480),fill_as_missing=true,path=outpath);
 
-function fit_online!(xout,x,f=identity)
-  fx = f(x)
-  ismissing(fx) || fit!(xout[],f(x))
-end
-preproc(x) = mean(skipmissing(x));
-init = ()->OnlineStats.Mean();
-filters = (NoFilter(),);
-fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x);
-f = create_userfunction(
-    fit_online!,
-    Float64,
-    is_mutating = true,
-    red = OnlineStats.merge!, 
-    init = init, 
-    finalize=fin_onine,
-    buftype = Mean,  
-#    args = (preproc,)
-)
+f = disk_onlinestat(Mean)
+
+
 
 optotal = GMDWop(inars, outars, f);
 
 r,  = results_as_diskarrays(optotal);
 
-
+r[2:3,2]
 
 lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
 chunks = getproperty.(lr.members,:cs)[2:3];
 
 out1 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
+r = DiskArrayEngine.LocalRunner(optotal,lr,(out1,),threaded=true)
+run(r)
 
-rmprocs(workers())
-addprocs(4,exeflags="--project=$(@__DIR__)")
-@everywhere begin
-  using Revise
-using DiskArrayEngine
-using DiskArrays: ChunkType, RegularChunks
-using Statistics
-using Zarr, DiskArrays, OffsetArrays
-using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
-  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
-  merge_outbuffer_collection, DistributedRunner
-using StatsBase: rle
-using CFTime: timedecode
-using Dates
-using OnlineStats
-using Logging
-using Distributed
-  include("daggertest.jl")
-  function fit_online!(xout,x,f=identity)
-    fx = f(x)
-    ismissing(fx) || fit!(xout[],f(x))
+using Plots
+heatmap(out1[:,:])
+
+out2 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
+
+
+# rmprocs(workers())
+# addprocs(4,exeflags="--project=$(@__DIR__)")
+# @everywhere begin
+# using DiskArrayEngine
+# using DiskArrays: ChunkType, RegularChunks
+# using Statistics
+# using Zarr, DiskArrays, OffsetArrays
+# using StatsBase: rle
+# using CFTime: timedecode
+# using Dates
+# using OnlineStats
+# using Logging
+# using Distributed
+  
+
+#   using LoggingExtras
+
+#   mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
+#     (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
+#   end
+#   global_logger(mylogger)
+  
+# end
+
+mylogger = TransformerLogger(ConsoleLogger(Logging.Debug)) do log
+  if length(string(log.message)) > 256
+      short_message = string(log.message)[1:min(end, 256)] * "..."
+      return merge(log, (;message=short_message))
+  else
+      return log
   end
-  preproc(x) = mean(skipmissing(x))
-
-  using Logging
-
-  global_logger(ConsoleLogger())
-end
-runner1 = DaggerRunner(optotal,lr,(out1,),threaded=true);
+end;
+global_logger(mylogger)
+runner1 = DiskArrayEngine.DaggerRunner(optotal,lr,(out2,),threaded=true);
 run(runner1);
+
 
 
 
@@ -129,7 +127,9 @@ run(runner1);
 
 
 using Plots
-heatmap(out1[:,:])
+heatmap(out2[:,:])
+
+unique(out1[:,:] - out2[:,:])
 
 error()
 out1[:,:]

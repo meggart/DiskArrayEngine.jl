@@ -11,5 +11,7 @@ include("runner.jl")
 include("diskarrayresults.jl")
 include("distribute.jl")
 include("enginearrays.jl")
+include("daggerrunner.jl")
 include("util/interpolate.jl")
+include("util/onlinestats_helpers.jl")
 end
