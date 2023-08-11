@@ -76,49 +76,50 @@ out1 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true
 r = DiskArrayEngine.LocalRunner(optotal,lr,(out1,),threaded=true)
 run(r)
 
+
 using Plots
 heatmap(out1[:,:])
 
 out2 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
 
 
-# rmprocs(workers())
-# addprocs(4,exeflags="--project=$(@__DIR__)")
-# @everywhere begin
-# using DiskArrayEngine
-# using DiskArrays: ChunkType, RegularChunks
-# using Statistics
-# using Zarr, DiskArrays, OffsetArrays
-# using StatsBase: rle
-# using CFTime: timedecode
-# using Dates
-# using OnlineStats
-# using Logging
-# using Distributed
+rmprocs(workers())
+addprocs(4,exeflags="--project=$(@__DIR__)")
+@everywhere begin
+using DiskArrayEngine
+using DiskArrays: ChunkType, RegularChunks
+using Statistics
+using Zarr, DiskArrays, OffsetArrays
+using StatsBase: rle
+using CFTime: timedecode
+using Dates
+using OnlineStats
+using Logging
+using Distributed
   
 
-#   using LoggingExtras
+  # using LoggingExtras
 
-#   mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
-#     (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
+  # mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
+  #   (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
+  # end
+  # global_logger(mylogger)
+  
+end
+
+# mylogger = TransformerLogger(ConsoleLogger(Logging.Debug)) do log
+#   if length(string(log.message)) > 256
+#       short_message = string(log.message)[1:min(end, 256)] * "..."
+#       return merge(log, (;message=short_message))
+#   else
+#       return log
 #   end
-#   global_logger(mylogger)
-  
-# end
-
-mylogger = TransformerLogger(ConsoleLogger(Logging.Debug)) do log
-  if length(string(log.message)) > 256
-      short_message = string(log.message)[1:min(end, 256)] * "..."
-      return merge(log, (;message=short_message))
-  else
-      return log
-  end
-end;
-global_logger(mylogger)
-runner1 = DiskArrayEngine.DaggerRunner(optotal,lr,(out2,),threaded=true);
-run(runner1);
-
-
+# end;
+# global_logger(mylogger)
+@time begin
+  runner1 = DiskArrayEngine.DaggerRunner(optotal,lr,(out2,),threaded=true);
+  run(runner1);
+end
 
 
 # out2 = zeros(Union{Float32,Missing},720,480)
@@ -134,6 +135,61 @@ unique(out1[:,:] - out2[:,:])
 error()
 out1[:,:]
 
+# example_data = [
+#   [
+#     [:a=>1, :b=>2, :b=>3],
+#     [:b=>3, :b=>2, :a=>1],
+#   ], [
+#     [:a=>1, :c=>10, :d=>-1, :c=>10, :d=>-1],
+#     [:c=>11, :d=>-2, :d=>-2, :c=>11],
+#   ], [
+#     [:e=>3, :e=>3],
+#     [:e=>4, :e=>4, :a=>1],
+#   ]
+# ]
+
+# #Kepp track of sum and count
+# function accumulate_data(x,agg) 
+#   for (name,val) in x
+#     n,s = get!(agg,name,(0,0))
+#     agg[name] = (n+1,s+val)
+#   end
+#   nothing
+# end
+
+# function global_merge_and_flush_outputs(aggregator)
+#   merged_aggregator = reduce(aggregator) do d1, d2
+#     merge(d1,d2) do (n1,s1),(n2,s2)
+#       n1+n2,s1+s2
+#     end
+#   end
+#   for k in keys(merged_aggregator)
+#     n,s = merged_aggregator[k]
+#     @assert n==4
+#     println("$k: $s")
+#     delete!(merged_aggregator,k)
+#   end
+# end
+
+# local_merge_and_flush_outputs(aggregator) = nothing
+
+
+# using Dagger
+# aggregator = Dagger.@shard per_thread=true Dict{Symbol,Tuple{Int,Int}}()
+# r = map(example_data) do group
+#   Dagger.spawn(group) do group
+#     r = map(group) do subgroup
+#       Dagger.@spawn accumulate_data(subgroup,aggregator)
+#     end
+#     fetch.(r)
+#     #The following line is the one of question: How can I make sure that exactly the 
+#     #Processors that participated in the last computation participate in this reduction and are not 
+#     #scheduled to do some other work at the same time 
+#     local_merge_and_flush_outputs(aggregator)
+#   end
+# end
+# fetch(r)
+# global_merge_and_flush_outputs(fetch.(map(identity,aggregator)))
 
 
 # function myfunc(x)
