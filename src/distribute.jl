@@ -92,7 +92,7 @@ function schedule(sch::DiskEngineScheduler,::Any,loopdims,loopsub,groupspecs)
     end
 end
 
-function run_group(sch;groupspecs = nothing,workerchannel=nothing)
+function run_group(sch;groupspecs = nothing)
     #We just run everything if there are no groups left 
     if isempty(sch.groups)
         DiskArrayEngine.run_loop(sch.runner,sch.loopranges;groupspecs)
@@ -106,11 +106,6 @@ function run_group(sch;groupspecs = nothing,workerchannel=nothing)
             gnew = sch.groups[1:end-1]
             schnew = DiskEngineScheduler(gnew,sch.loopranges,sch.runner)
             run_group(schnew,groupspecs = (g,))
-        end
-    end
-    if workerchannel !== nothing
-        for w in workers(sch.runner.workers)
-            put!(workerchannel,w)
         end
     end
 end

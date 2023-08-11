@@ -121,7 +121,11 @@ function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,r
     o3 = merge(o1.buffers,o2.buffers) do (n1,ntot1,b1),(n2,ntot2,b2)
         @debug myid(), "Merging aggregators of lengths ", n1[], " and ", n2[], " when total mustwrites is ", ntot1
         @assert b1.offsets == b2.offsets
-        @assert b1.lw == b2.lw
+        @assert b1.lw.lr == b2.lw.lr
+        @assert length(b1.lw.windows.members) == length(b2.lw.windows.members)
+        for (m1,m2) in zip(b1.lw.windows.members,b2.lw.windows.members)
+            @assert m1==m2
+        end
         @assert ntot1 == ntot2
         Ref(n1[]+n2[]),ntot1,ArrayBuffer(red.(b1.a,b2.a),b1.offsets,b1.lw)
     end
@@ -144,6 +148,7 @@ function flush_all_outbuffers(outbuffers,fin,outars,piddir)
             put_buffer(k,f, last(coll.buffers[k]), coll, outar, piddir)
         end
     end
+    GC.gc()
 end
   
 function generate_outbuffer_collection(ia,buftype,loopranges) 

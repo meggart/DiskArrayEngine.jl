@@ -50,6 +50,7 @@ function run_loop(runner::DaggerRunner,loopranges = runner.loopranges;groupspecs
         @debug "Writing merged buffers"
         flush_all_outbuffers(collections_merged,op.f.finalize,runner.outars,piddir)
     end
+    GC.gc()
     true
 end
 
@@ -57,4 +58,14 @@ function Base.run(runner::DaggerRunner)
     groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
     run_group(sch)
+end
+
+function schedule(sch::DiskEngineScheduler,::DaggerRunner,loopdims,loopsub,groupspecs)
+    fetch.(map(loopsub) do i
+        lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
+        schsub = DiskEngineScheduler(sch.groups,lrsub,sch.runner)
+        Dagger.spawn(schsub,groupspecs) do sched, gs
+            run_group(sched;gs)
+        end
+    end)
 end
