@@ -17,6 +17,130 @@ using Distributed
 #global_logger(SimpleLogger(stdout,Logging.Debug))
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
+using Dagger
+
+example_data = [
+  [
+    [:a=>1, :b=>2, :b=>3],
+    [:b=>3, :b=>2, :a=>1],
+  ], [
+    [:a=>1, :c=>10, :d=>-1, :c=>10, :d=>-1],
+    [:c=>11, :d=>-2, :d=>-2, :c=>11],
+  ], [
+    [:e=>3, :e=>3],
+    [:e=>4, :e=>4, :a=>1],
+  ]
+]
+
+#Kepp track of sum and count
+function accumulate_data(x,agg) 
+  for (name,val) in x
+    n,s = get!(agg,name,(0,0))
+    agg[name] = (n+1,s+val)
+  end
+  nothing
+end
+
+
+function merge_and_flush_outputs(aggregator)
+  if isempty(aggregator)
+    return nothing
+  else
+  merged_aggregator = fetch(reduce(aggregator) do d1, d2
+    merge(fetch(d1),fetch(d2)) do (n1,s1),(n2,s2)
+      n1+n2,s1+s2
+    end
+  end)
+  for k in keys(merged_aggregator)
+    n,s = merged_aggregator[k]
+    if n==4
+      @info "$k: $s"
+      delete!(merged_aggregator,k)
+    end
+  end
+  merged_aggregator
+  end
+end
+
+include("partialshard.jl")
+aggregator = Dagger.shard(;per_thread=true) do 
+  Dict{Symbol,Tuple{Int,Int}}()
+end;
+r = map(example_data) do group
+  Dagger.spawn(group) do group
+    Dagger.spawn_sequential() do
+      localaggregator = Dagger.shard(;per_thread=true) do
+        Dict{Symbol,Tuple{Int,Int}}()
+      end
+      r = Dagger.spawn_bulk() do
+        map(group) do subgroup
+          Dagger.spawn(accumulate_data,subgroup,localaggregator)
+        end
+      end
+      fetch.(r)
+      aggregator_copies = Dagger.spawn_bulk() do
+        map(localaggregator) do agg
+          Dagger.spawn(copy,agg)
+        end
+      end
+      # Merge and flush all aggregator copies
+      unflushed_data = Dagger.@spawn merge_and_flush_outputs(aggregator_copies)
+      @show group,fetch(unflushed_data)
+      Dagger.spawn(unflushed_data,aggregator) do rem_data, agg
+        merge!(agg,rem_data) do (n1,s1),(n2,s2)
+          n1+n2,s1+s2
+        end
+      end
+    end
+  end
+end;
+fetch.(r);
+merge_and_flush_outputs(aggregator);
+
+fetch.(values(aggregator.chunks))
+
+using Dagger, Distributed
+addprocs(2)
+@everywhere begin
+  using Dagger, Distributed
+  include("partialshard.jl")
+end
+s = partialshard(;per_thread=true) do
+  Ref(0)
+end
+r = map(1:10) do _
+  Dagger.spawn(s) do myacc
+    oldacc = myacc[]
+    myacc[] +=1
+    println(oldacc[], " ",myacc[], " ",objectid(myacc)," ",myid())
+    nothing
+  end
+end
+
+sum(fetch.(r))
+
+for a in s
+  println(fetch(a))
+end
+
+map(values(s.chunks)) do v
+  fetch(first(v))
+end
+
+r = fetch.(map(i->Dagger.spawn(getindex,i),s))
+
+cs = Dagger.@shard Threads.Atomic{Int}(0)
+
+
+aggregator.chunks
+
+fetch.(values(aggregator.chunks))
+
+r = Dagger.spawn() do
+  1+1
+end
+fr = fetch(r, raw=true)
+
 
 using Test
 
