@@ -1,5 +1,5 @@
 using Dagger
-
+@show Threads.nthreads()
 example_data = [
   [
     [:a=>1, :b=>2, :b=>3],
@@ -43,38 +43,48 @@ function merge_and_flush_outputs(aggregator)
   end
 end
 
-include("partialshard.jl")
+function filter_aggregator(aggregator,used_procs)
+  return (v for (k,v) in aggregator.chunks if k in used_procs)
+end
+function filter_aggregator(aggregator,::Nothing)
+  values(aggregator.chunks)
+end
+function merge_local_outputs(aggregator,procs)
+  aggregator_copies = Dagger.spawn_bulk() do
+    map(filter_aggregator(aggregator,procs)) do agg
+      Dagger.spawn(copy,agg)
+    end
+  end
+  # Merge and flush all aggregator copies
+  Dagger.@spawn merge_and_flush_outputs(aggregator_copies)
+end
 
-aggregator = partialshard(;per_thread=true) do 
+
+aggregator = Dagger.shard(;per_thread=true) do 
   Dict{Symbol,Tuple{Int,Int}}()
 end;
 r = map(example_data) do group
   Dagger.spawn(group) do group
     Dagger.spawn_sequential() do
-      localaggregator = partialshard(;per_thread=true) do
+      localaggregator = Dagger.shard(;per_thread=true) do
         Dict{Symbol,Tuple{Int,Int}}()
       end
       r = Dagger.spawn_bulk() do
         map(group) do subgroup
-          Dagger.@spawn accumulate_data(subgroup,localaggregator)
+          Dagger.spawn(accumulate_data,subgroup,localaggregator)
         end
       end
-      wait.(r)
-      aggregator_copies = Dagger.spawn_bulk() do
-        map(localaggregator) do agg
-          Dagger.@spawn copy(agg)
-        end
-      end
-      # Merge and flush all aggregator copies
-      unflushed_data = Dagger.@spawn merge_and_flush_outputs(aggregator_copies)
-      # Take the remaining data that is not yet removed and add it to the global aggregator
-      Dagger.spawn(unflushed_data,aggregator) do rem_data, agg
+      procs = Dagger.processor.(fetch.(r,raw=true))
+      #@show group,length(localaggregator)
+      unflushed_data = merge_local_outputs(localaggregator,procs)
+      wait(Dagger.spawn(unflushed_data,aggregator) do rem_data, agg
         merge!(agg,rem_data) do (n1,s1),(n2,s2)
           n1+n2,s1+s2
         end
-      end
+      end)
     end
+    true
   end
 end;
-wait.(r);
-fetch(merge_and_flush_outputs(aggregator));
+fetch.(r)
+wait(merge_local_outputs(aggregator,nothing));
