@@ -32,7 +32,7 @@ get_ordering(w::Window) = w.ordering
 get_overlap(w::Window) = w.overlap
 get_sparsity(w::Window) = w.sparsity
 
-function compute_orerding(r)
+function compute_ordering(r)
     exts = extrema.(r)
     allsorted(x;rev=false) = issorted(x,by=first;rev) && issorted(x,by=last;rev)
     ordering = if allsorted(exts)
@@ -82,7 +82,7 @@ end
 
 function to_window(r)
     eltype(r) <: Int || eltype(r) <: AbstractUnitRange{Int} || throw(ArgumentError("Windows must contain Ints or UnitRanges as elements"))
-    ordering = compute_orerding(r)
+    ordering = compute_ordering(r)
     overlap = compute_overlap(r,ordering)
     sparsity = compute_sparsity(r)
     Window(r,ordering,overlap,sparsity)

@@ -1,5 +1,6 @@
 using Revise
 using DiskArrayEngine
+import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Zarr, DiskArrays, OffsetArrays
@@ -18,129 +19,6 @@ using Distributed
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
 using Dagger
-
-example_data = [
-  [
-    [:a=>1, :b=>2, :b=>3],
-    [:b=>3, :b=>2, :a=>1],
-  ], [
-    [:a=>1, :c=>10, :d=>-1, :c=>10, :d=>-1],
-    [:c=>11, :d=>-2, :d=>-2, :c=>11],
-  ], [
-    [:e=>3, :e=>3],
-    [:e=>4, :e=>4, :a=>1],
-  ]
-]
-
-#Kepp track of sum and count
-function accumulate_data(x,agg) 
-  for (name,val) in x
-    n,s = get!(agg,name,(0,0))
-    agg[name] = (n+1,s+val)
-  end
-  nothing
-end
-
-
-function merge_and_flush_outputs(aggregator)
-  if isempty(aggregator)
-    return nothing
-  else
-  merged_aggregator = fetch(reduce(aggregator) do d1, d2
-    merge(fetch(d1),fetch(d2)) do (n1,s1),(n2,s2)
-      n1+n2,s1+s2
-    end
-  end)
-  for k in keys(merged_aggregator)
-    n,s = merged_aggregator[k]
-    if n==4
-      @info "$k: $s"
-      delete!(merged_aggregator,k)
-    end
-  end
-  merged_aggregator
-  end
-end
-
-include("partialshard.jl")
-aggregator = Dagger.shard(;per_thread=true) do 
-  Dict{Symbol,Tuple{Int,Int}}()
-end;
-r = map(example_data) do group
-  Dagger.spawn(group) do group
-    Dagger.spawn_sequential() do
-      localaggregator = Dagger.shard(;per_thread=true) do
-        Dict{Symbol,Tuple{Int,Int}}()
-      end
-      r = Dagger.spawn_bulk() do
-        map(group) do subgroup
-          Dagger.spawn(accumulate_data,subgroup,localaggregator)
-        end
-      end
-      fetch.(r)
-      aggregator_copies = Dagger.spawn_bulk() do
-        map(localaggregator) do agg
-          Dagger.spawn(copy,agg)
-        end
-      end
-      # Merge and flush all aggregator copies
-      unflushed_data = Dagger.@spawn merge_and_flush_outputs(aggregator_copies)
-      @show group,fetch(unflushed_data)
-      Dagger.spawn(unflushed_data,aggregator) do rem_data, agg
-        merge!(agg,rem_data) do (n1,s1),(n2,s2)
-          n1+n2,s1+s2
-        end
-      end
-    end
-  end
-end;
-fetch.(r);
-merge_and_flush_outputs(aggregator);
-
-fetch.(values(aggregator.chunks))
-
-using Dagger, Distributed
-addprocs(2)
-@everywhere begin
-  using Dagger, Distributed
-  include("partialshard.jl")
-end
-s = partialshard(;per_thread=true) do
-  Ref(0)
-end
-r = map(1:10) do _
-  Dagger.spawn(s) do myacc
-    oldacc = myacc[]
-    myacc[] +=1
-    println(oldacc[], " ",myacc[], " ",objectid(myacc)," ",myid())
-    nothing
-  end
-end
-
-sum(fetch.(r))
-
-for a in s
-  println(fetch(a))
-end
-
-map(values(s.chunks)) do v
-  fetch(first(v))
-end
-
-r = fetch.(map(i->Dagger.spawn(getindex,i),s))
-
-cs = Dagger.@shard Threads.Atomic{Int}(0)
-
-
-aggregator.chunks
-
-fetch.(values(aggregator.chunks))
-
-r = Dagger.spawn() do
-  1+1
-end
-fr = fetch(r, raw=true)
-
 
 using Test
 
@@ -172,8 +50,7 @@ stepveclat = 1:size(a,2);
 stepveclon = 1:size(a,1);
 outsteps = outrepfromrle(nts);
 
-
-
+outsteps
 # rangeproduct[3]
 
 inars = (InputArray(a),);
@@ -181,7 +58,6 @@ inars = (InputArray(a),);
 outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outsteps)),);
 
 outpath = tempname()
-b = zzeros(Float32,size(a,2),length(outsteps),chunks = (90,480),fill_as_missing=true,path=outpath);
 
 f = disk_onlinestat(Mean)
 
@@ -189,26 +65,28 @@ f = disk_onlinestat(Mean)
 
 optotal = GMDWop(inars, outars, f);
 
-r,  = results_as_diskarrays(optotal);
+# r,  = results_as_diskarrays(optotal);
 
-r[2:3,2]
+# r[2:3,2]
 
 lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
-chunks = getproperty.(lr.members,:cs)[2:3];
 
-out1 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
-r = DiskArrayEngine.LocalRunner(optotal,lr,(out1,),threaded=true)
-run(r)
+# out1 = zcreate(Float32,720,480,path=tempname(),fill_as_missing=true,fill_value=-1f32);
+# r = DiskArrayEngine.LocalRunner(optotal,lr,(out1,),threaded=true)
+# run(r)
 
 
-using Plots
-heatmap(out1[:,:])
 
-out2 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
+# using Plots
+# heatmap(out1[:,:])
+
+
+
+
 
 
 rmprocs(workers())
-addprocs(4,exeflags="--project=$(@__DIR__)")
+addprocs(4,exeflags=["--project=$(@__DIR__)","-t 4"])
 @everywhere begin
 using DiskArrayEngine
 using DiskArrays: ChunkType, RegularChunks
@@ -220,8 +98,12 @@ using Dates
 using OnlineStats
 using Logging
 using Distributed
-  
+  using LoggingExtras
 
+  mylogger = EarlyFilteredLogger(FileLogger("$(myid()).log")) do log
+    (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
+  end
+  global_logger(mylogger)
   # using LoggingExtras
 
   # mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
@@ -230,25 +112,131 @@ using Distributed
   # global_logger(mylogger)
   
 end
+mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
+    (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
+end
+# # mylogger = TransformerLogger(mylogger) do log
+# #   if length(string(log.message)) > 256
+# #       short_message = string(log.message)[1:min(end, 256)] * "..."
+# #       return merge(log, (;message=short_message))
+# #   else
+# #       return log
+# #   end
+# # end;
+global_logger(mylogger)
 
-# mylogger = TransformerLogger(ConsoleLogger(Logging.Debug)) do log
-#   if length(string(log.message)) > 256
-#       short_message = string(log.message)[1:min(end, 256)] * "..."
-#       return merge(log, (;message=short_message))
-#   else
-#       return log
-#   end
-# end;
+
+loopsizes = (1440,720,1840)
+chunksizes = (360,180,92)
+lr = DAE.ProductArray(DiskArrays.RegularChunks.(chunksizes,0,loopsizes))
+# chunks=(180,12)
+# lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
+
+chunks = getproperty.(lr.members,:cs)[2:3];
+out2 = zcreate(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
+
+
+# lr = DAE.ProductArray((DiskArrays.RegularChunks.((1440,90,92),0,(1440,90,92))))
+
+
+# mylogger = EarlyFilteredLogger(FileLogger("$(myid()).log")) do log
+#   (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Debug
+# end
 # global_logger(mylogger)
+
+
+runner1 = DAE.DaggerRunner(optotal,lr,(out2,),threaded=true,workerthreads=false);
+
+run(runner1)
+
+runner1.outbuffers.chunks
+runner = runner1
+buffers_used = collect(v for (k,v) in runner.outbuffers.chunks)
+buffer_copies = fetch.(map(buffers_used) do buf
+    Dagger.spawn(buf) do b
+        @debug "Copying buffers"
+        c = deepcopy(b)
+        @debug "Emptying buffers"
+        foreach(b) do oa
+            empty!(oa.buffers)
+        end
+        c
+    end
+end)
+
+collections_merged = DAE.merge_all_outbuffers(buffer_copies,optotal.f.red)
+
+unflushed_buffers = DAE.flush_all_outbuffers(collections_merged,optotal.f.finalize,runner.outars,nothing)
+
+@debug "Putting back flushed buffers"
+r = Dagger.spawn(unflushed_buffers,runner.outbuffers,optotal.f.red) do rembuf,outbuf, red
+    foreach(rembuf,outbuf) do r,o
+        if !isempty(r.buffers)
+            @debug "Putting back unflushed data"
+            newagg = DAE.merge_outbuffer_collection(o,r,optotal.f.red)
+            empty!(o)
+            for k in keys(newagg)
+                o[k] = newagg
+            end
+        end
+    end
+end
+fetch(r)
+
+exit()
+
+runner2 = DAE.LocalRunner(optotal,lr,(out2,),threaded=true);
+#run(runner2)
+
+inbuffers_pure=fetch(runner1.inbuffers_pure.chunks[Dagger.OSProc(1)])
+outbuffers = fetch(runner1.outbuffers.chunks[Dagger.OSProc(1)])
+inow = first(lr)
+inbuffers_wrapped = DAE.read_range.((inow,),optotal.inars,inbuffers_pure);
+outbuffers_now = DAE.extract_outbuffer.((inow,),(lr,),optotal.outspecs,optotal.f.init,optotal.f.buftype,outbuffers)
+CartesianIndices(inow)
+lspl = DAE.get_loopsplitter(optotal)
+
+
+@profview DAE.run_block_threaded(inow,lspl,optotal.f,inbuffers_wrapped,outbuffers_now)
+
+
+@time DAE.run_block_single(inow,optotal.f,inbuffers_wrapped,outbuffers_now);
+
+@time DAE.run_block(optotal,inow,inbuffers_wrapped,outbuffers_now,false);
+DAE.applyfilter(_,_) = ()
+g = (;f=(f=(x1,x2,x3)->nothing))
+
+
+ii = first(CartesianIndices(inow))
+
+@time DAE.run_block_single(inow,optotal.f,inbuffers_wrapped,outbuffers_now);
+
+
+cI = first(CartesianIndices(inow))
+inbuffers_wrapped[1]
+ff(cI,inbuffers_wrapped) = map(inbuffers_wrapped) do x
+  DAE._view(x, cI.I, DAE.Input())
+end
+@code_warntype ff(cI,inbuffers_wrapped)
+
+@code_warntype DAE.innercode(cI,optotal.f, inbuffers_wrapped, outbuffers_now)
+
+run(runner1);
+
+using Plots
+heatmap(out2[:,:])
+
+
+runner1 = DiskArrayEngine.DaggerRunner(optotal,lr,(out2,),threaded=true);
 @time begin
-  runner1 = DiskArrayEngine.DaggerRunner(optotal,lr,(out2,),threaded=true);
   run(runner1);
 end
-
-
 # out2 = zeros(Union{Float32,Missing},720,480)
 # runner2 = LocalRunner(optotal,lr,(out2,),threaded=true)
 # run(runner2)
+
+c2, = fetch(runner1.outbuffers.chunks[Dagger.ThreadProc(1,4)])
+isempty(c2.buffers)
 
 
 using Plots
@@ -256,6 +244,7 @@ heatmap(out2[:,:])
 
 unique(out1[:,:] - out2[:,:])
 
+exit()
 error()
 out1[:,:]
 

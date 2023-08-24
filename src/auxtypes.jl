@@ -74,6 +74,7 @@ function get_loopsplitter(nd,outspecs)
       union!(setdiff(alld,li),ioverlap)
     end
     allreddims = reduce(union!,outreduceinds,init=Int[])
+    @debug "Reducedims are $allreddims"
     LoopIndSplitter(nd,(allreddims...,))
   end
 

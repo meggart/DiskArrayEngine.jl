@@ -132,11 +132,12 @@ function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,r
     OutputAggregator(o3,o1.bufsize)
 end
 
+buffer_mergefunc(red,_) = (buf1,buf2) -> merge_outbuffer_collection.(buf1,buf2,(red,))
+
 function merge_all_outbuffers(outbuffers,red)
     @debug "Merging output buffers"
-    reduce(outbuffers) do buf1, buf2
-        res = merge_outbuffer_collection.(buf1,buf2,(red,))
-    end
+    @show eltype(outbuffers)
+    reduce(buffer_mergefunc(red,eltype(outbuffers)),outbuffers)
 end
 
 function flush_all_outbuffers(outbuffers,fin,outars,piddir)
@@ -149,6 +150,7 @@ function flush_all_outbuffers(outbuffers,fin,outars,piddir)
         end
     end
     GC.gc()
+    outbuffers
 end
   
 function generate_outbuffer_collection(ia,buftype,loopranges) 

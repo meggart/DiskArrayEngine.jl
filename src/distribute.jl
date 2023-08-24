@@ -2,17 +2,35 @@ function is_output_chunk_overlap(spec,outar,idim,lr)
     li = getloopinds(spec)
     if idim in li
         ii = findfirst(==(idim),li)
+        windows = spec.lw.windows.members[ii]
+        isa(get_overlap(windows),NonOverlapping) || return false
         loopind = li[ii]
         cs = eachchunk(outar).chunks[ii]
         chunkbounds = cumsum(length.(cs))
-        !all(in(chunkbounds),cumsum(length.(lr.members[loopind])))
+        windows = spec.lw.windows.members[ii]
+        looprange = lr.members[idim]
+        !all(looprange) do r
+            w1 = first(windows[first(r)])
+            w2 = last(windows[last(r)])
+            #First check if whole rannge is in a single chunk
+            cr = DiskArrays.findchunk(cs,w1:w2)
+            length(cr) == 1 && return true
+            #Now check if start and end are on a chunk boundary
+            first(first(cr))==w1 && last(last(cr))==w2
+        end
     else
         false
     end
 end
 function is_output_reducedim(spec,outar,idim)
     li = getloopinds(spec)
-    !in(idim,li)
+    if in(idim,li)
+        i = findfirst(==(idim),li)
+        ov = get_overlap(spec.lw.windows.members[i])
+        isa(ov,Repeating)
+    else
+        true
+    end
 end
 
 function split_dim_reasons(op,lr,outars)
@@ -94,20 +112,31 @@ end
 
 function run_group(sch;groupspecs = nothing)
     #We just run everything if there are no groups left 
+    @debug "Deciding how to run the group"
     if isempty(sch.groups)
+        @debug "No subgroups available, stepping into run_loop"
         DiskArrayEngine.run_loop(sch.runner,sch.loopranges;groupspecs)
     else
         loopdims = freeloopdims(sch)
         if !isempty(loopdims)
             loopsub = CartesianIndices((map(d->1:length(sch.loopranges.members[d]),loopdims)...,))
+            @debug "Free lopp dimensions available, splitting loop into $(length(loopsub)) subgroups"
             schedule(sch,sch.runner,loopdims,loopsub,groupspecs)
         else 
+            @debug "Groups are available for split"
             g = last(sch.groups)
+            if groupspecs !== nothing
+                g = (groupspecs...,g)
+            else
+                g = (g,)
+            end
+            @debug "New Group specs are ", g
             gnew = sch.groups[1:end-1]
             schnew = DiskEngineScheduler(gnew,sch.loopranges,sch.runner)
-            run_group(schnew,groupspecs = (g,))
+            run_group(schnew,groupspecs = g)
         end
     end
+    true
 end
 
 function Base.run(runner::LocalRunner)

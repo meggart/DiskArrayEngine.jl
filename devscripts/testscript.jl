@@ -1,5 +1,5 @@
 using Dagger
-@show Threads.nthreads()
+
 example_data = [
   [
     [:a=>1, :b=>2, :b=>3],
@@ -75,7 +75,6 @@ r = map(example_data) do group
         end
       end
       procs = Dagger.processor.(fetch.(r,raw=true))
-      #@show group,length(localaggregator)
       unflushed_data = merge_local_outputs(localaggregator,procs)
       wait(Dagger.spawn(unflushed_data,aggregator) do rem_data, agg
         merge!(agg,rem_data) do (n1,s1),(n2,s2)
