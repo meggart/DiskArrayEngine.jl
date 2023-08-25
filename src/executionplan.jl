@@ -50,6 +50,9 @@ function get_chunkspec(outspec,ot)
     cs = outspec.chunks
     avgs = avg_step.(outspec.lw.windows.members)
     si = map(m->last(last(m))-first(first(m))+1,outspec.lw.windows.members)
+    if cs isa GridChunks
+      cs = cs.chunks
+    end
     cs = map(cs,si) do csnow,s
         if csnow === nothing
             return UndefinedChunks(s)

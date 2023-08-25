@@ -34,7 +34,7 @@ buffer_mergefunc(red,::Type{<:Union{Dagger.Chunk,Dagger.Thunk, Dagger.EagerThunk
     merge_outbuffer_collection.(fx,fy,(red,))
 end
 
-function run_loop(runner::DaggerRunner,loopranges,outbuffers;groupspecs=nothing)
+function run_loop(runner::DaggerRunner,loopranges,outbuffers...;groupspecs=nothing)
     @debug "Groupspecs are ", groupspecs
     piddir = if groupspecs !== nothing && any(i->in(:output_chunk,i.reasons),groupspecs)
         tempname()
@@ -73,20 +73,23 @@ function run_loop(runner::DaggerRunner,loopranges,outbuffers;groupspecs=nothing)
         unflushed_buffers = Dagger.spawn(collections_merged,op.f.finalize,runner.outars,piddir) do cm,fin,outars,pdir
             flush_all_outbuffers(cm,fin,outars,pdir)
         end
-        @debug "Putting back flushed buffers"
-        r = Dagger.spawn(unflushed_buffers,outbuffers,red) do rembuf,outbuf, red
-            foreach(rembuf,outbuf) do r,o
-                if !isempty(r.buffers)
-                    @debug "Putting back unflushed data"
-                    newagg = merge_outbuffer_collection(o,r,red)
-                    empty!(o)
-                    for k in keys(newagg)
-                        o[k] = newagg
+        if !isempty(outbuffers)
+            outbuffers = last(outbuffers)
+            @debug "Putting back flushed buffers"
+            r = Dagger.spawn(unflushed_buffers,outbuffers,red) do rembuf,outbuf, red
+                foreach(rembuf,outbuf) do r,o
+                    if !isempty(r.buffers)
+                        @debug "Putting back unflushed data"
+                        newagg = merge_outbuffer_collection(o,r,red)
+                        empty!(o)
+                        for k in keys(newagg)
+                            o[k] = newagg
+                        end
                     end
                 end
             end
+            fetch(r)
         end
-        fetch(r)
     end
     GC.gc()
     true

@@ -14,4 +14,5 @@ include("enginearrays.jl")
 include("daggerrunner.jl")
 include("util/interpolate.jl")
 include("util/onlinestats_helpers.jl")
+include("util/rechunk.jl")
 end
