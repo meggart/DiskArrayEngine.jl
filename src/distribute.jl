@@ -110,18 +110,18 @@ function schedule(sch::DiskEngineScheduler,::Any,loopdims,loopsub,groupspecs)
     end
 end
 
-function run_group(sch;groupspecs = nothing)
+function run_group(sch, args...;groupspecs = nothing)
     #We just run everything if there are no groups left 
     @debug "Deciding how to run the group"
     if isempty(sch.groups)
         @debug "No subgroups available, stepping into run_loop"
-        DiskArrayEngine.run_loop(sch.runner,sch.loopranges;groupspecs)
+        run_loop(sch.runner,sch.loopranges,args...;groupspecs)
     else
         loopdims = freeloopdims(sch)
         if !isempty(loopdims)
             loopsub = CartesianIndices((map(d->1:length(sch.loopranges.members[d]),loopdims)...,))
             @debug "Free lopp dimensions available, splitting loop into $(length(loopsub)) subgroups"
-            schedule(sch,sch.runner,loopdims,loopsub,groupspecs)
+            schedule(sch,sch.runner,loopdims,loopsub,groupspecs,args...)
         else 
             @debug "Groups are available for split"
             g = last(sch.groups)
@@ -133,10 +133,9 @@ function run_group(sch;groupspecs = nothing)
             @debug "New Group specs are ", g
             gnew = sch.groups[1:end-1]
             schnew = DiskEngineScheduler(gnew,sch.loopranges,sch.runner)
-            run_group(schnew,groupspecs = g)
+            run_group(schnew,args...,groupspecs = g)
         end
     end
-    true
 end
 
 function Base.run(runner::LocalRunner)
@@ -147,45 +146,45 @@ end
 
 
 
-function DiskArrayEngine.schedule(sch,::DistributedRunner,loopdims,loopsub,groupspecs)
-    w = workers(sch.runner.workers)
-    n_workers = length(w)
-    taskstorun = collect(loopsub)
-    tasksrunning = Dict{eltype(taskstorun),CachingPool}()
-    runningtlock = ReentrantLock()
-    workersavail = RemoteChannel(()->Channel{Int}(length(w)))
-    for iw in w
-        put!(workersavail,iw)
-    end
-    while !isempty(taskstorun)
-        iw = take!(workersavail)
-        @show "Got worker $iw"
-        i = popfirst!(taskstorun)
-        lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
-        newpool = DataPool([iw],sch.runner.workers.data)
-        newrunner = DistributedRunner(sch.runner.op,sch.runner.loopranges,sch.runner.outars,sch.runner.threaded,sch.runner.inbuffers_pure,sch.runner.outbuffers,newpool)
-        schsub = DiskArrayEngine.DiskEngineScheduler(sch.groups,lrsub,newrunner)
-        lock(runningtlock) do
-            tasksrunning[i] = newpool
-        end
-        begin
-            try
-                println("Running group $i on loopdims $loopdims on worker $iw") 
-                run_group(schsub;groupspecs,workerchannel = workersavail)
-                println("Finished group $i on loopdims $loopdims on worker $iw")
-            # catch e
-            #     println(typeof(e))
-            finally
-                lock(runningtlock) do
-                    delete!(tasksrunning,i)
-                end            
-            end
-        end
-    end
-end
+# function DiskArrayEngine.schedule(sch,::DistributedRunner,loopdims,loopsub,groupspecs)
+#     w = workers(sch.runner.workers)
+#     n_workers = length(w)
+#     taskstorun = collect(loopsub)
+#     tasksrunning = Dict{eltype(taskstorun),CachingPool}()
+#     runningtlock = ReentrantLock()
+#     workersavail = RemoteChannel(()->Channel{Int}(length(w)))
+#     for iw in w
+#         put!(workersavail,iw)
+#     end
+#     while !isempty(taskstorun)
+#         iw = take!(workersavail)
+#         @show "Got worker $iw"
+#         i = popfirst!(taskstorun)
+#         lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
+#         newpool = DataPool([iw],sch.runner.workers.data)
+#         newrunner = DistributedRunner(sch.runner.op,sch.runner.loopranges,sch.runner.outars,sch.runner.threaded,sch.runner.inbuffers_pure,sch.runner.outbuffers,newpool)
+#         schsub = DiskArrayEngine.DiskEngineScheduler(sch.groups,lrsub,newrunner)
+#         lock(runningtlock) do
+#             tasksrunning[i] = newpool
+#         end
+#         begin
+#             try
+#                 println("Running group $i on loopdims $loopdims on worker $iw") 
+#                 run_group(schsub;groupspecs,workerchannel = workersavail)
+#                 println("Finished group $i on loopdims $loopdims on worker $iw")
+#             # catch e
+#             #     println(typeof(e))
+#             finally
+#                 lock(runningtlock) do
+#                     delete!(tasksrunning,i)
+#                 end            
+#             end
+#         end
+#     end
+# end
 
-function Base.run(runner::DistributedRunner)
-    groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
-    sch = DiskEngineScheduler(groups, runner.loopranges, runner)
-    run_group(sch)
-end
+# function Base.run(runner::DistributedRunner)
+#     groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
+#     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
+#     run_group(sch)
+# end

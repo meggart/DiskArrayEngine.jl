@@ -85,7 +85,7 @@ lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,m
 
 
 
-rmprocs(workers())
+
 addprocs(4,exeflags=["--project=$(@__DIR__)","-t 4"])
 @everywhere begin
 using DiskArrayEngine
@@ -112,78 +112,44 @@ using Distributed
   # global_logger(mylogger)
   
 end
-mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
-    (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
-end
-# # mylogger = TransformerLogger(mylogger) do log
-# #   if length(string(log.message)) > 256
-# #       short_message = string(log.message)[1:min(end, 256)] * "..."
-# #       return merge(log, (;message=short_message))
-# #   else
-# #       return log
-# #   end
-# # end;
-global_logger(mylogger)
+# mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
+#     (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
+# end
+# global_logger(mylogger)
 
 
 loopsizes = (1440,720,1840)
-chunksizes = (360,180,92)
+chunksizes = (360,360,92)
 lr = DAE.ProductArray(DiskArrays.RegularChunks.(chunksizes,0,loopsizes))
 # chunks=(180,12)
-# lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
+#lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
 
 chunks = getproperty.(lr.members,:cs)[2:3];
+chunks = (300,100)
 out2 = zcreate(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
 
 
 # lr = DAE.ProductArray((DiskArrays.RegularChunks.((1440,90,92),0,(1440,90,92))))
 
 
-# mylogger = EarlyFilteredLogger(FileLogger("$(myid()).log")) do log
-#   (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Debug
-# end
-# global_logger(mylogger)
-
-
-runner1 = DAE.DaggerRunner(optotal,lr,(out2,),threaded=true,workerthreads=false);
-
-run(runner1)
-
-runner1.outbuffers.chunks
-runner = runner1
-buffers_used = collect(v for (k,v) in runner.outbuffers.chunks)
-buffer_copies = fetch.(map(buffers_used) do buf
-    Dagger.spawn(buf) do b
-        @debug "Copying buffers"
-        c = deepcopy(b)
-        @debug "Emptying buffers"
-        foreach(b) do oa
-            empty!(oa.buffers)
-        end
-        c
-    end
-end)
-
-collections_merged = DAE.merge_all_outbuffers(buffer_copies,optotal.f.red)
-
-unflushed_buffers = DAE.flush_all_outbuffers(collections_merged,optotal.f.finalize,runner.outars,nothing)
-
-@debug "Putting back flushed buffers"
-r = Dagger.spawn(unflushed_buffers,runner.outbuffers,optotal.f.red) do rembuf,outbuf, red
-    foreach(rembuf,outbuf) do r,o
-        if !isempty(r.buffers)
-            @debug "Putting back unflushed data"
-            newagg = DAE.merge_outbuffer_collection(o,r,optotal.f.red)
-            empty!(o)
-            for k in keys(newagg)
-                o[k] = newagg
-            end
-        end
-    end
+mylogger = EarlyFilteredLogger(FileLogger("$(myid()).log")) do log
+  (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
 end
-fetch(r)
+global_logger(mylogger)
 
-exit()
+
+
+runner1 = DAE.DaggerRunner(optotal,lr,(out2,),threaded=false,workerthreads=true);
+
+
+#runner1 = DAE.LocalRunner(optotal,lr,(out2,),threaded=true);
+
+@time run(runner1)
+
+using Plots
+heatmap(out2[:,:])
+
+
 
 runner2 = DAE.LocalRunner(optotal,lr,(out2,),threaded=true);
 #run(runner2)
