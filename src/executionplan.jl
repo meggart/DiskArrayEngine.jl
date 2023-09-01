@@ -39,11 +39,13 @@ end
 
 function integrated_readtime(app_cs,cs,singleread,window) 
   acp = access_per_chunk(app_cs,window)
-  if acp < 1.0
-    length(cs)*singleread*(1-0.5*window/maximum(last(cs)))
+  readtime = if acp < 1.0
+    #length(cs)*singleread*(1-0.5*window/maximum(last(cs)))
+    length(cs)*singleread*(0.999 + 0.001*acp)
   else
     length(cs)*acp*singleread
   end
+  readtime
 end
 
 function get_chunkspec(outspec,ot)
@@ -111,7 +113,7 @@ avg_step(lw,::Union{Increasing,Decreasing},::Any) = mean(diff(first.(lw)))
 avg_step(lw,::Any,::Any) = error("Not implemented")
 
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
-estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0  
+estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0
 
 function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2)
   lb = [0.0,map(_->1.0,op.windowsize)...]

@@ -9,14 +9,13 @@ function is_output_chunk_overlap(spec,outar,idim,lr)
         chunkbounds = cumsum(length.(cs))
         windows = spec.lw.windows.members[ii]
         looprange = lr.members[idim]
+        length(looprange) == 1 && returnfalse
         !all(looprange) do r
             w1 = first(windows[first(r)])
             w2 = last(windows[last(r)])
-            #First check if whole rannge is in a single chunk
             cr = DiskArrays.findchunk(cs,w1:w2)
-            length(cr) == 1 && return true
-            #Now check if start and end are on a chunk boundary
-            first(first(cr))==w1 && last(last(cr))==w2
+            #check if start and end are on a chunk boundary
+            first(cs[first(cr)])==w1 && last(cs[last(cr)])==w2
         end
     else
         false
