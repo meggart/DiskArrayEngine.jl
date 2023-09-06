@@ -6,6 +6,12 @@ struct UndefinedChunks
     s::Int
 end
 
+struct ExecutionPlan{N,P}
+  sizes_raw::NTuple{N,Float64}
+  cost_min::Float64
+  lr::P
+end
+
 
 access_per_chunk(cs,window) = cs/window
 function integrated_readtime(_,cs::UndefinedChunks,singleread,window)
@@ -25,9 +31,12 @@ end
 function apparent_chunksize(cs, lw)
 lwcenters = mean.(lw)
   l = map(cs) do r
-    length(searchsortedfirst(lwcenters,first(r)):searchsortedlast(lwcenters,last(r)))
+    searchsortedfirst(lwcenters,first(r))
+    #length(searchsortedfirst(lwcenters,first(r)):searchsortedlast(lwcenters,last(r)))
   end
-  l = if all(iszero,l)
+  push!(l,length(lwcenters)+1)
+  l = diff(l)
+  l = if all(<=(1),l)
     ones(Int, length(lw))
   else
     filter(!iszero,l)
@@ -74,9 +83,10 @@ function get_chunkspec(outspec,ot)
     end
     sr = estimate_singleread(outspec)
     lw = outspec.lw
-    windowfac = prod(avgs)
+    windowfac = avgs
+    windowoffset = max_size.(outspec.lw.windows.members)
     elsize = sizeof(Base.nonmissingtype(ot))
-    (;cs,app_cs,sr,lw,elsize,windowfac)
+    (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
 end
 
 function get_chunkspec(ia::InputArray)
@@ -85,9 +95,10 @@ function get_chunkspec(ia::InputArray)
     app_cs = ceil.(Int,DiskArrays.approx_chunksize.(cs) ./ avgs)
     sr = estimate_singleread(ia)
     lw = ia.lw
-    windowfac = prod(avgs)
+    windowfac = avgs
+    windowoffset = max_size.(ia.lw.windows.members)
     elsize = DiskArrays.element_size(ia.a)
-    (;cs,app_cs,sr,lw,elsize,windowfac)
+    (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
 end
 function time_per_array(spec,window,totsize)
     mytot = mysub(spec.lw,totsize)
@@ -96,7 +107,8 @@ function time_per_array(spec,window,totsize)
     prod(integrated_readtime.(spec.app_cs,spec.cs,spec.sr,mywindow))*repfac
 end
 function bufsize_per_array(spec,window)
-    prod(mysub(spec.lw,window))*spec.elsize*spec.windowfac
+  wsizes = mysub(spec.lw,window)
+  prod((spec.windowoffset .+ spec.windowfac .* (wsizes .- 1)))*spec.elsize
 end
 
 compute_bufsize(window,_,chunkspec...) = sum(bufsize_per_array.(chunkspec,(window,)))
@@ -109,8 +121,9 @@ all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec...),window
 all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
 
 avg_step(lw) = avg_step(lw,get_ordering(lw),get_overlap(lw))
-avg_step(lw,::Union{Increasing,Decreasing},::Any) = mean(diff(first.(lw)))
+avg_step(lw,::Union{Increasing,Decreasing},::Any) = length(lw) > 1 ? mean(diff(first.(lw))) : 1.0
 avg_step(lw,::Any,::Any) = error("Not implemented")
+max_size(lw) = maximum(length,lw)
 
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0
@@ -125,7 +138,8 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
-  adjust_loopranges(op,sol;tol_low,tol_high,max_order)
+  lr = adjust_loopranges(op,sol;tol_low,tol_high,max_order)
+  ExecutionPlan((sol.u...,),sol.objective,lr)
 end
 
 using OrderedCollections, Primes

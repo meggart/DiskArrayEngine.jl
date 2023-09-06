@@ -47,28 +47,6 @@ function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base
   (;lw=LoopWindows(outrp,Val((dimsmap...,))),chunks,ismem)
 end
 
-"""
-    struct MWOp
-
-A type holding information about the sliding window operation to be done over an existing dimension. 
-Field names:
-
-* `rtot` unit range denoting the full range of the operation
-* `parentchunks` list of chunk structures of the parent arrays
-* `w` size of the moving window, length-2 tuple with steps before and after center
-* `steps` range denoting the center coordinates for each step of the op
-* `outputs` ids of related outputs and indices of their dimension index
-"""
-struct MWOp{G<:ChunkType,P}
-    rtot::UnitRange{Int64}
-    parentchunks::G
-    steps::P
-    is_ordered::Bool
-end
-function MWOp(parentchunks; r = first(first(parentchunks)):last(last(parentchunks)), steps=ProcessingSteps(0,r),is_ordered=false)
-    MWOp(r, parentchunks, steps, is_ordered)
-end
-
 mysub(ia,t) = map(li->t[li],getloopinds(ia))
 
 "Returns the full domain that a `DiskArrays.ChunkType` object covers as a unit range"
@@ -120,17 +98,4 @@ function GMDWop(inars, outspecs, f)
     s = getwindowsize(inars, outspecs)
     GMDWop(inars,outspecs, f, s)
 end
-
-
-abstract type Emitter end
-struct DirectEmitter end
-
-
-abstract type Aggregator end
-
-struct ReduceAggregator{F}
-    op::F
-end
-
-
 

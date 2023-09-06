@@ -11,8 +11,9 @@ end
 make_outbuffer_shard(r::DaggerRunner) = Dagger.shard(per_thread=r.workerthreads) do 
     generate_outbuffers(r.op.outspecs,r.op.f,r.loopranges)
 end
-function DaggerRunner(op,loopranges,outars;workerthreads=false,threaded=true)
+function DaggerRunner(op,exec_plan,outars;workerthreads=false,threaded=true)
     inars = op.inars
+    loopranges = plan_to_loopranges(exec_plan)
     inbuffers = Dagger.shard(per_thread=workerthreads) do
         generate_inbuffers(inars, loopranges)
     end

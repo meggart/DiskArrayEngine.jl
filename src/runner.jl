@@ -98,6 +98,9 @@ function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myout
     end
 end
 
+plan_to_loopranges(lr) = lr
+plan_to_loopranges(lr::ExecutionPlan) = lr.lr
+
 struct LocalRunner{OP,LR,OA,IB,OB,P}
     op::OP
     loopranges::LR
@@ -107,11 +110,12 @@ struct LocalRunner{OP,LR,OA,IB,OB,P}
     outbuffers::OB
     progress::P
 end
-function LocalRunner(op,loopranges,outars;threaded=true,showprogress=true)
+function LocalRunner(op,exec_plan,outars;threaded=true,showprogress=true)
+    loopranges = plan_to_loopranges(exec_plan)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
     pm = showprogress ? Progress(length(loopranges)) : nothing
-    LocalRunner(op,loopranges,outars, threaded, inbuffers_pure,outbuffers,pm)
+    LocalRunner(op,plan_to_loopranges(loopranges),outars, threaded, inbuffers_pure,outbuffers,pm)
 end
 
 update_progress!(::Nothing) = nothing

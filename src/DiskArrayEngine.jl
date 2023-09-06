@@ -15,4 +15,5 @@ include("daggerrunner.jl")
 include("util/interpolate.jl")
 include("util/onlinestats_helpers.jl")
 include("util/rechunk.jl")
+include("util/aggregate.jl")
 end
