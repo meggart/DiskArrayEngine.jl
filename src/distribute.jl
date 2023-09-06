@@ -9,7 +9,7 @@ function is_output_chunk_overlap(spec,outar,idim,lr)
         chunkbounds = cumsum(length.(cs))
         windows = spec.lw.windows.members[ii]
         looprange = lr.members[idim]
-        length(looprange) == 1 && returnfalse
+        length(looprange) == 1 && return false
         !all(looprange) do r
             w1 = first(windows[first(r)])
             w2 = last(windows[last(r)])
@@ -105,11 +105,11 @@ function schedule(sch::DiskEngineScheduler,::Any,loopdims,loopsub,groupspecs)
     for i in loopsub
         lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
         schsub = DiskEngineScheduler(sch.groups,lrsub,sch.runner)
-        run_group(schsub;groupspecs)
+        run_group(schsub,groupspecs)
     end
 end
 
-function run_group(sch, args...;groupspecs = nothing)
+function run_group(sch, groupspecs,args...)
     #We just run everything if there are no groups left 
     @debug "Deciding how to run the group"
     if isempty(sch.groups)
@@ -132,7 +132,7 @@ function run_group(sch, args...;groupspecs = nothing)
             @debug "New Group specs are ", g
             gnew = sch.groups[1:end-1]
             schnew = DiskEngineScheduler(gnew,sch.loopranges,sch.runner)
-            run_group(schnew,args...,groupspecs = g)
+            run_group(schnew,g,args...)
         end
     end
 end
@@ -140,7 +140,7 @@ end
 function Base.run(runner::LocalRunner)
     groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
-    run_group(sch)
+    run_group(sch,nothing)
 end
 
 

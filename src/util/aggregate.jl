@@ -18,6 +18,12 @@ function outrepfromrle(nts)
     r
 end
 
+function windows_from_spec(::ReduceAggregator,groups,sdim)
+    groupid,n = rle(groups)
+    allunique(groupid) || throw(ArgumentError("Aggregation to cyclic groups not yet implemented"))
+    1:sdim, outrepfromrle(n) 
+end
+
 function windows_from_spec(::DirectAggregator,groups,sdim)
     groupid,n = rle(groups)
     allunique(groupid) || throw(ArgumentError("Aggregation to cyclic groups not yet implemented"))

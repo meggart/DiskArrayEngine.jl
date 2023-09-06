@@ -101,14 +101,14 @@ end
 plan_to_loopranges(lr) = lr
 plan_to_loopranges(lr::ExecutionPlan) = lr.lr
 
-struct LocalRunner{OP,LR,OA,IB,OB,P}
-    op::OP
-    loopranges::LR
-    outars::OA
-    threaded::Bool
-    inbuffers_pure::IB
-    outbuffers::OB
-    progress::P
+struct LocalRunner
+    op
+    loopranges
+    outars
+    threaded
+    inbuffers_pure
+    outbuffers
+    progress
 end
 function LocalRunner(op,exec_plan,outars;threaded=true,showprogress=true)
     loopranges = plan_to_loopranges(exec_plan)
@@ -122,13 +122,19 @@ update_progress!(::Nothing) = nothing
 update_progress!(pm) = next!(pm)
 
 function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
+    run_loop(
+        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress,loopranges;groupspecs
+    )
+end
+
+@noinline function run_loop(::LocalRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges;groupspecs=nothing)
     for inow in loopranges
         @debug "inow = ", inow
-        inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
-        outbuffers_now = extract_outbuffer.((inow,),runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
-        run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
-        put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
-        update_progress!(runner.progress)
+        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+        outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+        put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars,nothing)
+        update_progress!(progress)
     end
 end
 

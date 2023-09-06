@@ -1,15 +1,15 @@
 using Dagger: Dagger, shard
 
-struct DaggerRunner{OP,LR,OA,IB}
-    op::OP
-    loopranges::LR
-    outars::OA
+struct DaggerRunner
+    op
+    loopranges
+    outars
     threaded::Bool
     workerthreads::Bool
-    inbuffers_pure::IB
+    inbuffers_pure
 end
-make_outbuffer_shard(r::DaggerRunner) = Dagger.shard(per_thread=r.workerthreads) do 
-    generate_outbuffers(r.op.outspecs,r.op.f,r.loopranges)
+make_outbuffer_shard(op,runnerloopranges,workerthreads) = Dagger.shard(per_thread=workerthreads) do 
+    generate_outbuffers(op.outspecs,op.f,runnerloopranges)
 end
 function DaggerRunner(op,exec_plan,outars;workerthreads=false,threaded=true)
     inars = op.inars
@@ -36,6 +36,13 @@ buffer_mergefunc(red,::Type{<:Union{Dagger.Chunk,Dagger.Thunk, Dagger.EagerThunk
 end
 
 function run_loop(runner::DaggerRunner,loopranges,outbuffers...;groupspecs=nothing)
+    @noinline run_loop(runner,runner.op,runner.inbuffers_pure,runner.loopranges,runner.workerthreads,
+    runner.outars,runner.threaded,loopranges,outbuffers...;groupspecs)
+end
+
+
+function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthreads,
+    outars,threaded, loopranges,outbuffers...;groupspecs=nothing)
     @debug "Groupspecs are ", groupspecs
     piddir = if groupspecs !== nothing && any(i->in(:output_chunk,i.reasons),groupspecs)
         tempname()
@@ -43,14 +50,14 @@ function run_loop(runner::DaggerRunner,loopranges,outbuffers...;groupspecs=nothi
         nothing
     end
     @debug "Pidddir is $piddir"
-    local_outbuffers = make_outbuffer_shard(runner)
-    op = runner.op
+    local_outbuffers = make_outbuffer_shard(op,runnerloopranges,workerthreads)
+    op = op
     r = broadcast(loopranges) do inow
-        Dagger.spawn(runner.inbuffers_pure,local_outbuffers,inow,piddir,runner.outars,loopranges) do inbuffers_pure, outbuffers, inow, piddir, outars,loopranges
+        Dagger.spawn(inbuffers_pure,local_outbuffers,inow,piddir,outars,loopranges) do inbuffers_pure, outbuffers, inow, piddir, outars,loopranges
             @debug myid(), " Starting block ", inow
             inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
             outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
-            run_block(op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
+            run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
             @debug myid(), "Finished running block ", inow
 
             put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
@@ -71,7 +78,7 @@ function run_loop(runner::DaggerRunner,loopranges,outbuffers...;groupspecs=nothi
         buffers_used = fetch.(buffers_used)
         collections_merged = merge_all_outbuffers(buffers_used,op.f.red)
         @debug "Writing merged buffers $(typeof(collections_merged))"
-        unflushed_buffers = Dagger.spawn(collections_merged,op.f.finalize,runner.outars,piddir) do cm,fin,outars,pdir
+        unflushed_buffers = Dagger.spawn(collections_merged,op.f.finalize,outars,piddir) do cm,fin,outars,pdir
             flush_all_outbuffers(cm,fin,outars,pdir)
         end
         if !isempty(outbuffers)
@@ -106,7 +113,7 @@ function Base.run(runner::DaggerRunner)
     opts = runner.workerthreads ? (;) : (;scope = Dagger.scope(thread=1))
     Dagger.with_options(;opts...) do
         @debug "Calling first run_group"
-        run_group(sch)
+        run_group(sch,nothing)
     end
     true
 end
@@ -118,9 +125,9 @@ function schedule(sch::DiskEngineScheduler,r::DaggerRunner,loopdims,loopsub,grou
         @debug "New split loopranges are: ", lrsub.members
         schsub = DiskEngineScheduler(sch.groups,lrsub,sch.runner)
         @debug "Spawning"
-        outbuffers = make_outbuffer_shard(r)
+        outbuffers = make_outbuffer_shard(r.op,r.loopranges,r.workerthreads)
         Dagger.spawn(schsub,groupspecs,outbuffers) do sched, gs, ob
-            run_group(sched,ob;groupspecs = gs)
+            run_group(sched,gs,ob)
         end
     end
     wait.(r)
