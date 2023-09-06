@@ -24,7 +24,7 @@ using Test
 
 
 
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true);
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
 
 t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true);
 tvec = timedecode(t[:],t.attrs["units"]);
@@ -34,22 +34,27 @@ agg = DAE.DirectAggregator(DAE.create_userfunction(mean,Union{Float64,Missing}))
 dimspec = (3=>groups,1=>nothing,2=>8)
 op = DAE.gmwop_for_aggregator(agg,dimspec,a)
 
-720/8
-
 p = DAE.optimize_loopranges(op,5e8)
 
-p.lr
 r = DAE.results_as_diskarrays(op)[1]
 
-r[100,420]
+p.lr
 
-aout = zeros(Union{Missing,Float64},144,480)
-r=DAE.LocalRunner(op,p,(aout,))
+p.lr
+cs = length.(first.(p.lr.members[2:3]))
+using Zarr
+aout = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
+r=DAE.DaggerRunner(op,p,(aout,))
 run(r)
 
 using Plots
-heatmap(aout)
+heatmap(aout[:,:])
 
+aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
+r=DAE.LocalRunner(op,p,(aout2,))
+run(r)
+
+heatmap(aout2)
 
 years, nts = rle(yearmonth.(tvec));
 nts;
