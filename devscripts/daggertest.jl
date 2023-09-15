@@ -36,9 +36,6 @@ x0 = [2.0 for _ in op.windowsize]
 totsize = op.windowsize
 chunkspecs = (totsize,DAE.get_chunkspec.(op.inars)..., DAE.get_chunkspec.(op.outspecs,op.f.outtype)...)
 
-ts = first(chunkspecs)
-cs = Base.tail(chunkspecs)
-inv(DAE.time_per_array(cs[1],[90,90,184],ts)/DAE.time_per_array(cs[1],[1440,720,1],ts))
 
 
 lonr = range(100,1440,length=100)

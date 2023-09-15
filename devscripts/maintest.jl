@@ -1,4 +1,3 @@
-using Revise
 using DiskArrayEngine
 import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
@@ -24,27 +23,36 @@ using Test
 
 
 
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
 
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true);
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
+
 tvec = timedecode(t[:],t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-agg = DAE.DirectAggregator(DAE.create_userfunction(mean,Union{Float64,Missing}))
-dimspec = (3=>groups,1=>nothing,2=>8)
-op = DAE.gmwop_for_aggregator(agg,dimspec,a)
+agg1 = DAE.DirectAggregator(DAE.create_userfunction(mean,Union{Float64,Missing}))
+agg2 = DAE.ReduceAggregator(DAE.disk_onlinestat(mean))
+dimspec = (3=>nothing,)
+op1 = DAE.gmwop_for_aggregator(agg1,dimspec,a)
+p1 = DAE.optimize_loopranges(op1,5e8)
+op2 = DAE.gmwop_for_aggregator(agg2,dimspec,a)
+p2 = DAE.optimize_loopranges(op2,5e8)
 
-p = DAE.optimize_loopranges(op,5e8)
+p1.cost_min, p2.cost_min
 
-r = DAE.results_as_diskarrays(op)[1]
-
-p.lr
-
-p.lr
-cs = length.(first.(p.lr.members[2:3]))
 using Zarr
-aout = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
-r=DAE.DaggerRunner(op,p,(aout,))
+cs1 = length.(first.(p1.lr.members[1:2]))
+aout1 = zcreate(Float64,size(a)[1:2]...,path=tempname(),fill_value=-1.0e32,chunks=cs1,fill_as_missing=true)
+r=DAE.LocalRunner(op1,p1,(aout1,))
+run(r)
+
+
+p2.lr
+cs2 = length.(first.(p2.lr.members[1:2]))
+aout2 = zcreate(Float64,size(a)[1:2]...,path=tempname(),fill_value=-1.0e32,chunks=cs2,fill_as_missing=true)
+r=DAE.LocalRunner(op2,p2,(aout2,))
 run(r)
 
 using Plots

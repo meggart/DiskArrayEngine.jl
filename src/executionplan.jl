@@ -3,10 +3,12 @@ import OptimizationMOI, OptimizationOptimJL
 using DiskArrays: eachchunk
 using Statistics: mean
 struct UndefinedChunks 
-    s::Int
+  s::Int
 end
 
 struct ExecutionPlan{N,P}
+  input_chunkspecs
+  output_chunkspecs
   sizes_raw::NTuple{N,Float64}
   cost_min::Float64
   lr::P
@@ -15,7 +17,7 @@ end
 
 access_per_chunk(cs,window) = cs/window
 function integrated_readtime(_,cs::UndefinedChunks,singleread,window)
-    cs.s/window*singleread    
+  cs.s/window*singleread    
 end
 
 """
@@ -29,7 +31,7 @@ function apparent_chunksize(inar::InputArray)
 end
 
 function apparent_chunksize(cs, lw)
-lwcenters = mean.(lw)
+  lwcenters = mean.(lw)
   l = map(cs) do r
     searchsortedfirst(lwcenters,first(r))
     #length(searchsortedfirst(lwcenters,first(r)):searchsortedlast(lwcenters,last(r)))
@@ -58,53 +60,53 @@ function integrated_readtime(app_cs,cs,singleread,window)
 end
 
 function get_chunkspec(outspec,ot)
-    cs = outspec.chunks
-    avgs = avg_step.(outspec.lw.windows.members)
-    si = map(m->last(last(m))-first(first(m))+1,outspec.lw.windows.members)
-    if cs isa GridChunks
-      cs = cs.chunks
+  cs = outspec.chunks
+  avgs = avg_step.(outspec.lw.windows.members)
+  si = map(m->last(last(m))-first(first(m))+1,outspec.lw.windows.members)
+  if cs isa GridChunks
+    cs = cs.chunks
+  end
+  cs = map(cs,si) do csnow,s
+    if csnow === nothing
+      return UndefinedChunks(s)
     end
-    cs = map(cs,si) do csnow,s
-        if csnow === nothing
-            return UndefinedChunks(s)
-        end
-        if csnow isa Integer
-            DiskArrays.RegularChunks(csnow,0,s)
-        else
-          csnow
-        end
+    if csnow isa Integer
+      DiskArrays.RegularChunks(csnow,0,s)
+    else
+      csnow
     end
-    app_cs = map(cs,avgs) do csnow,avgsnow
-        if csnow isa UndefinedChunks 
-            nothing
-        else
-            ceil(Int,DiskArrays.approx_chunksize(csnow) / avgsnow)
-        end
+  end
+  app_cs = map(cs,avgs) do csnow,avgsnow
+    if csnow isa UndefinedChunks 
+      nothing
+    else
+      ceil(Int,DiskArrays.approx_chunksize(csnow) / avgsnow)
     end
-    sr = estimate_singleread(outspec)
-    lw = outspec.lw
-    windowfac = avgs
-    windowoffset = max_size.(outspec.lw.windows.members)
-    elsize = sizeof(Base.nonmissingtype(ot))
-    (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
+  end
+  sr = estimate_singleread(outspec)
+  lw = outspec.lw
+  windowfac = avgs
+  windowoffset = max_size.(outspec.lw.windows.members)
+  elsize = sizeof(Base.nonmissingtype(ot))
+  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
 end
 
 function get_chunkspec(ia::InputArray)
-    cs = DiskArrays.eachchunk(ia.a).chunks
-    avgs = avg_step.(ia.lw.windows.members)
-    app_cs = ceil.(Int,DiskArrays.approx_chunksize.(cs) ./ avgs)
-    sr = estimate_singleread(ia)
-    lw = ia.lw
-    windowfac = avgs
-    windowoffset = max_size.(ia.lw.windows.members)
-    elsize = DiskArrays.element_size(ia.a)
-    (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
+  cs = DiskArrays.eachchunk(ia.a).chunks
+  avgs = avg_step.(ia.lw.windows.members)
+  app_cs = ceil.(Int,DiskArrays.approx_chunksize.(cs) ./ avgs)
+  sr = estimate_singleread(ia)
+  lw = ia.lw
+  windowfac = avgs
+  windowoffset = max_size.(ia.lw.windows.members)
+  elsize = DiskArrays.element_size(ia.a)
+  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
 end
 function time_per_array(spec,window,totsize)
-    mytot = mysub(spec.lw,totsize)
-    repfac = prod(totsize)/prod(mytot)
-    mywindow = mysub(spec.lw,window)
-    prod(integrated_readtime.(spec.app_cs,spec.cs,spec.sr,mywindow))*repfac
+  mytot = mysub(spec.lw,totsize)
+  repfac = prod(totsize)/prod(mytot)
+  mywindow = mysub(spec.lw,window)
+  prod(integrated_readtime.(spec.app_cs,spec.cs,spec.sr,mywindow))*repfac
 end
 function bufsize_per_array(spec,window)
   wsizes = mysub(spec.lw,window)
@@ -113,9 +115,9 @@ end
 
 compute_bufsize(window,_,chunkspec...) = sum(bufsize_per_array.(chunkspec,(window,)))
 function compute_time(window,chunkspec) 
-    totsize = first(chunkspec)
-    chunkspec = Base.tail(chunkspec)
-    sum(time_per_array.(chunkspec,(window,),(totsize,)))
+  totsize = first(chunkspec)
+  chunkspec = Base.tail(chunkspec)
+  sum(time_per_array.(chunkspec,(window,),(totsize,)))
 end
 all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec...),window...)
 all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
@@ -133,13 +135,15 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   ub = [max_cache,op.windowsize...]
   x0 = [2.0 for _ in op.windowsize]
   totsize = op.windowsize
-  chunkspecs = (totsize,get_chunkspec.(op.inars)..., get_chunkspec.(op.outspecs,op.f.outtype)...)
+  input_chunkspecs = get_chunkspec.(op.inars)
+  output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
+  chunkspecs = (totsize,input_chunkspecs..., output_chunkspecs...)
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
-  lr = adjust_loopranges(op,sol;tol_low,tol_high,max_order)
-  ExecutionPlan((sol.u...,),sol.objective,lr)
+  lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order)
+  ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),sol.objective,lr)
 end
 
 using OrderedCollections, Primes
@@ -157,94 +161,132 @@ function is_possible_candidate(cand,smax,optires,reltol_low,reltol_high)
 end
 
 function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high=0.05,max_order=2)
-    smallest_common = kgv(intsizes...)
-    if optires > smallest_common
-      for ord in 1:max_order 
-        rr = round(Int,optires/smallest_common*ord)
-        cand = smallest_common * rr//ord
-        is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand
-      end
-      #Did not find a better candidate, try rounding
-    elseif smallest_common < smax
-      for ord in 1:max_order 
-        rr = round(Int,smallest_common/optires*ord)
-        cand = smallest_common * ord // rr
-        is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand
-      end
+  smallest_common = kgv(intsizes...)
+  if optires > smallest_common
+    for ord in 1:max_order 
+      rr = round(Int,optires/smallest_common*ord)
+      cand = smallest_common * rr//ord
+      is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand
     end
-    if length(intsizes) > 1
-      #Simply try with less input arrays, to at least align a few of them, this could be further optimized
-      return find_adjust_candidates(optires,smax,Base.tail(intsizes);reltol_low, reltol_high,max_order)
+    #Did not find a better candidate, try rounding
+  elseif smallest_common < smax
+    for ord in 1:max_order 
+      rr = round(Int,smallest_common/optires*ord)
+      cand = smallest_common * ord // rr
+      is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand
     end
-    cand = round(Int,optires)//1
-    is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand
-    return floor(Int,optires)//1
   end
+  if length(intsizes) > 1
+    #Simply try with less input arrays, to at least align a few of them, this could be further optimized
+    return find_adjust_candidates(optires,smax,Base.tail(intsizes);reltol_low, reltol_high,max_order)
+  end
+  cand = round(Int,optires)//1
+  is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand
+  return floor(Int,optires)//1
+end
 
-  function generate_LoopRange(r_adj::Rational,apparent_chunks::ChunkType;tres=3)
-    splitsize = ceil(Int,r_adj)
-    all_ends = last.(apparent_chunks)
-    firstend = findlast(<=(splitsize),all_ends)
-    res,inow = if firstend === nothing
-      Int[], 1
-    else
-      Int[all_ends[firstend]], all_ends[firstend]+1
-    end
-    while inow <= last(last(apparent_chunks))
-      scand = inow+splitsize-1
-      iallends = searchsortedlast(all_ends,scand)
-      if iallends > 0 
-        if iallends > length(all_ends)
-          push!(res,last(all_ends)-inow+1)
-          inow = last(all_ends)+1
-        elseif abs(all_ends[iallends]-scand) < tres
-          push!(res,all_ends[iallends]-inow+1)
-          inow = all_ends[iallends]+1
-        else
-          push!(res,min(splitsize,last(all_ends)-inow+1))
-          inow = inow+splitsize
-        end
+function generate_LoopRange(r_adj::Rational,apparent_chunks::ChunkType;tres=3)
+  splitsize = ceil(Int,r_adj)
+  all_ends = last.(apparent_chunks)
+  firstend = findlast(<=(splitsize),all_ends)
+  res,inow = if firstend === nothing
+    Int[], 1
+  else
+    Int[all_ends[firstend]], all_ends[firstend]+1
+  end
+  while inow <= last(last(apparent_chunks))
+    scand = inow+splitsize-1
+    iallends = searchsortedlast(all_ends,scand)
+    if iallends > 0 
+      if iallends > length(all_ends)
+        push!(res,last(all_ends)-inow+1)
+        inow = last(all_ends)+1
+      elseif abs(all_ends[iallends]-scand) < tres
+        push!(res,all_ends[iallends]-inow+1)
+        inow = all_ends[iallends]+1
       else
-        push!(res,splitsize)
+        push!(res,min(splitsize,last(all_ends)-inow+1))
         inow = inow+splitsize
       end
+    else
+      push!(res,splitsize)
+      inow = inow+splitsize
     end
-    DiskArrays.chunktype_from_chunksizes(res)
   end
+  res
+end
 
+
+
+function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_order=2)
+  inars = filter(!ismem,optotal.inars)
+  app_cs = apparent_chunksize.(inars)
+  r = map(approx_opti,1:length(approx_opti),optotal.windowsize) do sol,iopt,si
+    inaxchunks = ()
+    for ia in 1:length(inars)
+      li = getloopinds(inars[ia].lw)
+      if iopt in li
+        ili = findfirst(==(iopt),li)
+        inaxchunks = (inaxchunks...,(app_cs[ia].chunks[ili]))
+      end
+    end
+    if !isempty(inaxchunks)
+      insizes = DiskArrays.approx_chunksize.(inaxchunks)
+      cands = find_adjust_candidates(sol,si,insizes;reltol_low=tol_low,reltol_high=tol_high,max_order)
+      cands, first(inaxchunks)
+    else
+      rsol = clamp(round(Int,sol),1,si)
+      rsol//1, RegularChunks(rsol,0,si)
+    end
+  end
   
+  adj_cands = first.(r)
+  adj_chunks = last.(r)
+  
+  @debug "Adjust candidates: ", adj_cands
+  lr = generate_LoopRange.(adj_cands,adj_chunks,tres=3)
+  lr = DiskArrays.chunktype_from_chunksizes.(fix_output_overlap(optotal.outspecs,lr))
+  foreach(lr,optotal.windowsize) do l,s
+    @assert first(first(l))>=1
+    @assert last(last(l))<=s
+  end
+  ProductArray((lr...,))
+end
 
-  function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_order=2)
-    inars = filter(!ismem,optotal.inars)
-    app_cs = apparent_chunksize.(inars)
-    r = map(approx_opti.u,1:length(approx_opti.u),optotal.windowsize) do sol,iopt,si
-      inaxchunks = ()
-      for ia in 1:length(inars)
-        li = getloopinds(inars[ia].lw)
-        if iopt in li
-          ili = findfirst(==(iopt),li)
-          inaxchunks = (inaxchunks...,(app_cs[ia].chunks[ili]))
+"""
+If one of the outputs is a reduction it is important not to have overlapping
+loop ranges for a reduction group. This will try to correct loopranges to avoid
+the problems mentioned above.
+"""
+function fix_output_overlap(outspecs,lrbreaks)
+  for outspec in outspecs
+    mylr = mysub(outspec.lw,lrbreaks)
+    newbreaks = map(mylr,outspec.lw.windows.members) do breaks,window
+      if get_overlap(window) isa Repeating
+        r = collect(DiskArrays.chunktype_from_chunksizes(breaks))
+        for i in 1:length(r)-1
+          r1,r2 = r[i],r[i+1]
+          split_orig = last(r1)
+          moveleft = length(r1)>length(r2)
+          isplit = split_orig
+          r1_array, r2_array = window[first(r1)]:window[last(r1)],window[first(r2)]:window[last(r2)]
+          while !isempty(intersect(r1_array,r2_array)) && r1 != r2
+            isplit = moveleft ? (isplit - 1) : (isplit + 1)
+            r1 = first(r1):isplit
+            r2 = (isplit+1):last(r2)
+            r1_array, r2_array = window[first(r1)]:window[last(r1)],window[first(r2)]:window[last(r2)]
+          end
+          r[i]=r1
+          r[i+1]=r2
         end
-      end
-      if !isempty(inaxchunks)
-        insizes = DiskArrays.approx_chunksize.(inaxchunks)
-        cands = find_adjust_candidates(sol,si,insizes;reltol_low=tol_low,reltol_high=tol_high,max_order)
-        cands, first(inaxchunks)
+        length.(r)
       else
-        rsol = clamp(round(Int,sol),1,si)
-        rsol//1, RegularChunks(rsol,0,si)
+        breaks
       end
     end
-  
-    adj_cands = first.(r)
-    adj_chunks = last.(r)
-
-    @debug "Adjust candidates: ", adj_cands
-    lr = generate_LoopRange.(adj_cands,adj_chunks,tres=3)
-    foreach(lr,optotal.windowsize) do l,s
-        @assert first(first(l))>=1
-        @assert last(last(l))<=s
+    for (lr,b) in zip(mylr,newbreaks)
+      lr.=b
     end
-    ProductArray((lr...,))
   end
-  
+  lrbreaks
+end

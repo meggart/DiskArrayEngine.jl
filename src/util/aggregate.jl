@@ -19,10 +19,17 @@ function outrepfromrle(nts)
 end
 
 function windows_from_spec(::ReduceAggregator,groups,sdim)
+    length(groups) == sdim || throw(ArgumentError("Length of group vector must be equal to size of the respective dimension"))
     groupid,n = rle(groups)
     allunique(groupid) || throw(ArgumentError("Aggregation to cyclic groups not yet implemented"))
-    1:sdim, outrepfromrle(n) 
+    1:sdim,  outrepfromrle(n)
 end
+
+function windows_from_spec(::ReduceAggregator,windowsize::Int,sdim)    
+    1:sdim,[((i-1)÷windowsize)+1 for i in 1:sdim]
+end
+
+windows_from_spec(::ReduceAggregator,windowsize::Nothing,sdim) = 1:sdim,nothing
 
 function windows_from_spec(::DirectAggregator,groups,sdim)
     groupid,n = rle(groups)

@@ -5,7 +5,7 @@ function fit_online!(xout,x,f=identity)
     ismissing(fx) || OnlineStats.fit!(xout[],fx)
 end
 fin_online(x) = OnlineStats.nobs(x) == 0 ? missing : OnlineStats.value(x);
-disk_onlinestat(s,preproc=identity) = create_userfunction(
+disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},preproc=identity) = create_userfunction(
     fit_online!,
     Union{Float64,Missing},
     is_mutating = true,
@@ -15,3 +15,7 @@ disk_onlinestat(s,preproc=identity) = create_userfunction(
     buftype = typeof(s()),  
     args = (preproc,)
 )
+
+disk_onlinestat(s,preproc=identity) = disk_onlinestat(func_to_online(s),preproc)
+func_to_online(::typeof(mean)) = OnlineStats.Mean
+func_to_online(::typeof(sum)) = OnlineStats.Sum
