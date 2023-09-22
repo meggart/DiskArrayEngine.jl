@@ -8,7 +8,7 @@ using Zarr, DiskArrays, OffsetArrays
 #  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
 #  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
 #  merge_outbuffer_collection, DistributedRunner
-using StatsBase: rle
+using StatsBase: rle,mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
@@ -40,9 +40,45 @@ p1 = DAE.optimize_loopranges(op1,5e8)
 op2 = DAE.gmwop_for_aggregator(agg2,dimspec,a)
 p2 = DAE.optimize_loopranges(op2,5e8)
 
-p1.cost_min, p2.cost_min
+plan = p1
+io = stdout
+function printinfo(io::IO,plan::DAE.ExecutionPlan;extended=true)
+  n_chunks = length(plan.lr)
+  sh_chunks = size(plan.lr)
+  mean_windowsize = map(plan.lr.members) do w
+    mode(length.(w))
+  end
+  println(io,"DiskArrayEngine ExecutionPlan")
+  println(io,"Processing in $n_chunks blocks of shape $sh_chunks")
+  println(io,"With block sizes of approximately $mean_windowsize")
+  extended || return nothing
+  apc = DAE.access_per_chunk(plan)
+  irt = DAE.time_per_chunk(plan)
+  tpa = DAE.time_per_array(plan)
+  arf = DAE.array_repeat_factor(plan)
+  aapc = DAE.actual_access_per_chunk(plan)
+  for (ii,ia) in enumerate(plan.input_chunkspecs)
+    println(io)
+    println(io,"Input Array $ii of size $(last.(last.(ia.cs)))")
+    println(io,"Optim Access per chunk: $(apc.input_times[ii])")
+    println(io,"Optim time per dim: $(irt.input_times[ii])")
+    println(io,"With factor : $(arf.input_times[ii]) resulting in $(tpa.input_times[ii])")
+    println(io,"Actual access per chunk: $(aapc.input_times[ii])")
+    println(io,"Actual estimated readtime: ")
+
+  end
+end
+printinfo(stdout,plan)
+
+DAE.access_per_chunk(plan)
+
+
+p1.sizes_raw
+p2.sizes_raw
+p1.cost_min/p2.cost_min
 
 using Zarr
+p1.lr
 cs1 = length.(first.(p1.lr.members[1:2]))
 aout1 = zcreate(Float64,size(a)[1:2]...,path=tempname(),fill_value=-1.0e32,chunks=cs1,fill_as_missing=true)
 r=DAE.LocalRunner(op1,p1,(aout1,))
@@ -56,7 +92,9 @@ r=DAE.LocalRunner(op2,p2,(aout2,))
 run(r)
 
 using Plots
-heatmap(aout[:,:])
+heatmap(aout1[:,:])
+
+heatmap(aout2[:,:])
 
 aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
 r=DAE.LocalRunner(op,p,(aout2,))

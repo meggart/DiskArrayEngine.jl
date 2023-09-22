@@ -10,10 +10,51 @@ struct ExecutionPlan{N,P}
   input_chunkspecs
   output_chunkspecs
   sizes_raw::NTuple{N,Float64}
+  windowsize::NTuple{N,Int}
   cost_min::Float64
   lr::P
 end
 
+function time_per_array(p::ExecutionPlan)
+  input_times = time_per_array.(p.input_chunkspecs,(p.sizes_raw,),(p.windowsize,))
+  output_times = time_per_array.(p.output_chunkspecs,(p.sizes_raw,),(p.windowsize,))
+  (;input_times,output_times)
+end
+function time_per_chunk(p::ExecutionPlan)
+  input_times = time_per_chunk.(p.input_chunkspecs,(p.sizes_raw,))
+  output_times = time_per_chunk.(p.output_chunkspecs,(p.sizes_raw,))
+  (;input_times,output_times)
+end
+function array_repeat_factor(p::ExecutionPlan) 
+  input_times = array_repeat_factor.(p.input_chunkspecs,(p.windowsize,))
+  output_times = array_repeat_factor.(p.output_chunkspecs,(p.windowsize,))
+  (;input_times,output_times)
+end
+function access_per_chunk(p::ExecutionPlan)
+  input_times = map(p.input_chunkspecs) do chunkspec
+    mysize = mysub(chunkspec.lw,p.sizes_raw)
+    access_per_chunk.(chunkspec.app_cs,mysize)
+  end
+  output_times = map(p.output_chunkspecs) do chunkspec
+    mysize = mysub(chunkspec.lw,p.sizes_raw)
+    map(chunkspec.app_cs,mysize) do acs,ms
+      isnothing(acs) ? nothing : access_per_chunk(acs,ms)
+    end
+  end
+  (;input_times,output_times)
+end
+function actual_access_per_chunk(p::ExecutionPlan)
+  input_times = map(p.input_chunkspecs) do chunkspec
+    mylr = mysub(chunkspec.lw,p.lr.members)
+    actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members)
+  end
+  output_times = map(p.input_chunkspecs) do chunkspec
+    mylr = mysub(chunkspec.lw,p.lr.members)
+    isnothing(chunkspec.cs) && return nothing
+    actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members)
+  end
+  (;input_times,output_times)
+end
 
 access_per_chunk(cs,window) = cs/window
 function integrated_readtime(_,cs::UndefinedChunks,singleread,window)
@@ -45,6 +86,24 @@ function apparent_chunksize(cs, lw)
   end
   sum(l) == length(lw) || error("Error in determining apparent chunk sizes")
   DiskArrays.chunktype_from_chunksizes(l)
+end
+
+
+function actual_chunk_access(cs,looprange,window)
+  n_access = 0
+  for lr in looprange 
+    w1,w2 = mapreduce(((a,b),(c,d))->(min(a,c),max(b,d)),lr) do ii
+      extrema(window[ii])
+    end
+    i = DiskArrays.findchunk(cs,w1:w2)
+    n_access = n_access+length(i)
+  end
+  n_access/length(cs)
+end
+
+function actual_readtime(cs,singleread,window)
+  acp = actual_chunk_access(cs,window)
+  acp*length(cs)*singleread
 end
 
 
@@ -102,12 +161,20 @@ function get_chunkspec(ia::InputArray)
   elsize = DiskArrays.element_size(ia.a)
   (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
 end
-function time_per_array(spec,window,totsize)
+function array_repeat_factor(spec,totsize)
   mytot = mysub(spec.lw,totsize)
-  repfac = prod(totsize)/prod(mytot)
-  mywindow = mysub(spec.lw,window)
-  prod(integrated_readtime.(spec.app_cs,spec.cs,spec.sr,mywindow))*repfac
+  prod(totsize)/prod(mytot)
 end
+function time_per_array(spec,window,totsize)
+  repfac = array_repeat_factor(spec,totsize)
+  prod(time_per_chunk(spec,window))*repfac
+end
+function time_per_chunk(spec,window)
+  mywindow = mysub(spec.lw,window)
+  integrated_readtime.(spec.app_cs,spec.cs,spec.sr,mywindow)
+end
+
+
 function bufsize_per_array(spec,window)
   wsizes = mysub(spec.lw,window)
   prod((spec.windowoffset .+ spec.windowfac .* (wsizes .- 1)))*spec.elsize
@@ -143,7 +210,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
   lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order)
-  ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),sol.objective,lr)
+  ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),totsize,sol.objective,lr)
 end
 
 using OrderedCollections, Primes

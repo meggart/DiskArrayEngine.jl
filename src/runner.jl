@@ -59,10 +59,21 @@ end
 
 @noinline function run_block_threaded(loopRanges,lspl,f::UserOp,args...)
     tri, ntri = split_loopranges_threads(lspl,loopRanges)
-    for i_nonthread in CartesianIndices(ntri)
-        Threads.@threads for i_thread in CartesianIndices(tri)
-            cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
-            innercode(cI,f,args...)
+    if isempty(tri) 
+        run_block_single(loopRanges,f,args...)
+    else
+        if isempty(ntri)
+            Threads.@threads for i_thread in CartesianIndices(tri)
+                cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                innercode(cI,f,args...)
+            end
+        else
+            for i_nonthread in CartesianIndices(ntri)
+                Threads.@threads for i_thread in CartesianIndices(tri)
+                    cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                    innercode(cI,f,args...)
+                end
+            end
         end
     end
 end
