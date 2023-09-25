@@ -2,9 +2,13 @@ using Ipopt, Optimization
 import OptimizationMOI, OptimizationOptimJL
 using DiskArrays: eachchunk
 using Statistics: mean
+using StatsBase: mode
 struct UndefinedChunks 
   s::Int
 end
+arraysize_from_chunksize(cs::UndefinedChunks)=cs.s
+arraysize_from_chunksize(cs::DiskArrays.RegularChunks)=cs.s
+arraysize_from_chunksize(cs::DiskArrays.IrregularChunks)=last(cs.offsets)
 
 struct ExecutionPlan{N,P}
   input_chunkspecs
@@ -14,10 +18,14 @@ struct ExecutionPlan{N,P}
   cost_min::Float64
   lr::P
 end
+function Base.show(io::IO,::MIME"text/plain",p::ExecutionPlan)
+  comp = get(io, :compact, false)
+  printinfo(io,p,extended=!comp)
+end
 
 function time_per_array(p::ExecutionPlan)
-  input_times = time_per_array.(p.input_chunkspecs,(p.sizes_raw,),(p.windowsize,))
-  output_times = time_per_array.(p.output_chunkspecs,(p.sizes_raw,),(p.windowsize,))
+  input_times = time_per_array.(p.input_chunkspecs,(p.sizes_raw,))
+  output_times = time_per_array.(p.output_chunkspecs,(p.sizes_raw,))
   (;input_times,output_times)
 end
 function time_per_chunk(p::ExecutionPlan)
@@ -44,17 +52,85 @@ function access_per_chunk(p::ExecutionPlan)
   (;input_times,output_times)
 end
 function actual_access_per_chunk(p::ExecutionPlan)
+
   input_times = map(p.input_chunkspecs) do chunkspec
     mylr = mysub(chunkspec.lw,p.lr.members)
     actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members)
   end
-  output_times = map(p.input_chunkspecs) do chunkspec
+  output_times = map(p.output_chunkspecs) do chunkspec
     mylr = mysub(chunkspec.lw,p.lr.members)
     isnothing(chunkspec.cs) && return nothing
     actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members)
   end
   (;input_times,output_times)
 end
+function actual_time_per_array(p::ExecutionPlan)
+  input_times = map(p.input_chunkspecs) do chunkspec
+    mylr = mysub(chunkspec.lw,p.lr.members)
+    repfac = chunkspec.repfac
+    prod(actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members))*repfac*chunkspec.sr
+  end
+  output_times = map(p.output_chunkspecs) do chunkspec
+    mylr = mysub(chunkspec.lw,p.lr.members)
+    isnothing(chunkspec.cs) && return nothing
+    prod(actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members))*chunkspec.sr
+  end
+  (;input_times,output_times)
+end
+function actual_io_costs(p::ExecutionPlan)
+  t = actual_time_per_array(p)
+  s_in = mapreduce(+,zip(t.input_times,p.input_chunkspecs),init=0.0) do (ti,spec)
+    s = arraysize_from_chunksize.(spec.cs)
+    prod(s)*ti
+  end
+  s_out = mapreduce(+,zip(t.output_times,p.output_chunkspecs),init=0.0) do (ti,spec)
+    s = arraysize_from_chunksize.(spec.cs)
+    prod(s)*ti
+  end
+  s_in+s_out
+end
+function printinfo(io::IO,plan::ExecutionPlan;extended=true)
+  n_chunks = length(plan.lr)
+  sh_chunks = size(plan.lr)
+  mean_windowsize = map(plan.lr.members) do w
+    mode(length.(w))
+  end
+  println(io,"DiskArrayEngine ExecutionPlan")
+  println(io,"=============================")
+  println(io,"Processing in $n_chunks blocks of shape $sh_chunks")
+  println(io,"With block sizes of approximately $mean_windowsize")
+  println(io,"Sum of IO costs: $(actual_io_costs(plan))")
+  extended || return nothing
+  apc = access_per_chunk(plan)
+  irt = time_per_chunk(plan)
+  tpa = time_per_array(plan)
+  arf = array_repeat_factor(plan)
+  aapc = actual_access_per_chunk(plan)
+  atpa = actual_time_per_array(plan)
+  for (ii,ia) in enumerate(plan.input_chunkspecs)
+    s = arraysize_from_chunksize.(ia.cs)
+    println(io)
+    println(io,"Input Array $ii of size $s")
+    println(io,"----------------------------------")
+    println(io,"Optim Access per chunk: $(apc.input_times[ii])")
+    println(io,"Optim time per dim: $(irt.input_times[ii])")
+    println(io,"With factor : $(arf.input_times[ii]) resulting in $(tpa.input_times[ii])")
+    println(io,"Actual access per chunk: $(aapc.input_times[ii])")
+    println(io,"Actual estimated readtime: $(atpa.input_times[ii]*prod(s))")
+  end
+  for (ii,ia) in enumerate(plan.output_chunkspecs)
+    s = arraysize_from_chunksize.(ia.cs)
+    println(io)
+    println(io,"Output Array $ii of size $s")
+    println(io,"---------------------------------")
+    println(io,"Optim Access per chunk: $(apc.output_times[ii])")
+    println(io,"Optim time per dim: $(irt.output_times[ii])")
+    println(io,"With factor : $(arf.output_times[ii]) resulting in $(tpa.output_times[ii])")
+    println(io,"Actual access per chunk: $(aapc.output_times[ii])")
+    println(io,"Actual estimated writetime: $(atpa.output_times[ii]*prod(s))")
+  end
+end
+
 
 access_per_chunk(cs,window) = cs/window
 function integrated_readtime(_,cs::UndefinedChunks,singleread,window)
@@ -101,10 +177,7 @@ function actual_chunk_access(cs,looprange,window)
   n_access/length(cs)
 end
 
-function actual_readtime(cs,singleread,window)
-  acp = actual_chunk_access(cs,window)
-  acp*length(cs)*singleread
-end
+actual_chunk_access(cs::UndefinedChunks,looprange,window) = 1.0
 
 
 function integrated_readtime(app_cs,cs,singleread,window) 
@@ -145,9 +218,10 @@ function get_chunkspec(outspec,ot)
   sr = estimate_singleread(outspec)
   lw = outspec.lw
   windowfac = avgs
+  repfac = 1.0
   windowoffset = max_size.(outspec.lw.windows.members)
   elsize = sizeof(Base.nonmissingtype(ot))
-  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
+  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset,repfac)
 end
 
 function get_chunkspec(ia::InputArray)
@@ -157,16 +231,17 @@ function get_chunkspec(ia::InputArray)
   sr = estimate_singleread(ia)
   lw = ia.lw
   windowfac = avgs
+  repfac = array_repeat_factor(lw,arraysize_from_chunksize.(cs))
   windowoffset = max_size.(ia.lw.windows.members)
   elsize = DiskArrays.element_size(ia.a)
-  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset)
+  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset,repfac)
 end
-function array_repeat_factor(spec,totsize)
-  mytot = mysub(spec.lw,totsize)
+function array_repeat_factor(lw,totsize)
+  mytot = mysub(lw,totsize)
   prod(totsize)/prod(mytot)
 end
-function time_per_array(spec,window,totsize)
-  repfac = array_repeat_factor(spec,totsize)
+function time_per_array(spec,window)
+  repfac = spec.repfac
   prod(time_per_chunk(spec,window))*repfac
 end
 function time_per_chunk(spec,window)
@@ -180,11 +255,9 @@ function bufsize_per_array(spec,window)
   prod((spec.windowoffset .+ spec.windowfac .* (wsizes .- 1)))*spec.elsize
 end
 
-compute_bufsize(window,_,chunkspec...) = sum(bufsize_per_array.(chunkspec,(window,)))
+compute_bufsize(window,chunkspec...) = sum(bufsize_per_array.(chunkspec,(window,)))
 function compute_time(window,chunkspec) 
-  totsize = first(chunkspec)
-  chunkspec = Base.tail(chunkspec)
-  sum(time_per_array.(chunkspec,(window,),(totsize,)))
+  sum(time_per_array.(chunkspec,(window,)))
 end
 all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec...),window...)
 all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
@@ -204,7 +277,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   totsize = op.windowsize
   input_chunkspecs = get_chunkspec.(op.inars)
   output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
-  chunkspecs = (totsize,input_chunkspecs..., output_chunkspecs...)
+  chunkspecs = (input_chunkspecs..., output_chunkspecs...)
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
@@ -356,4 +429,20 @@ function fix_output_overlap(outspecs,lrbreaks)
     end
   end
   lrbreaks
+end
+
+
+function output_chunks(outspec,lr)
+  mylr=mysub(outspec.lw,lr.members)
+  map(mylr,outspec.lw.windows.members) do llr,wi
+    ww = map(llr) do l
+      wnow = wi[l]
+      first(first(wnow)):last(last(wnow))
+    end
+    DiskArrays.chunktype_from_chunksizes(length.(sort(unique(ww),lt=rangelt)))
+  end
+end
+
+function output_chunks(p::ExecutionPlan)
+output_chunks.(p.output_chunkspecs,(p.lr,))
 end

@@ -121,7 +121,7 @@ struct LocalRunner
     outbuffers
     progress
 end
-function LocalRunner(op,exec_plan,outars;threaded=true,showprogress=true)
+function LocalRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
     loopranges = plan_to_loopranges(exec_plan)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)

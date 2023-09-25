@@ -1,4 +1,5 @@
 using StatsBase: rle
+export aggregate_diskarray
 
 struct DirectAggregator{F<:UserOp} 
     f::F
@@ -79,3 +80,23 @@ function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
     return GMDWop(tuple(inars),tuple(outspecs),agg.f)
 end
 
+function aggregate_diskarray(a,f,dimspec;skipmissing=false)
+    
+    hasmissings = Missing <: eltype(a)
+    rett = Base.promote_op(f,Vector{Base.nonmissingtype(eltype(a))})
+    if hasmissings
+        rett = Union{rett,Missing}
+    end
+    agg1 = DirectAggregator(create_userfunction(f,rett))
+    agg2 = ReduceAggregator(disk_onlinestat(mean))
+  
+    op1 = gmwop_for_aggregator(agg1,dimspec,a)
+    p1 = optimize_loopranges(op1,5e8)
+    op2 = gmwop_for_aggregator(agg2,dimspec,a)
+    p2 = optimize_loopranges(op2,5e8)
+    c1 = actual_io_costs(p1)
+    c2 = actual_io_costs(p2)
+    #we still prefer direct aggregatoin, so we giv it a slight lead:
+    op = c1*0.9 < c2 ? op1 : op2
+    results_as_diskarrays(op)[1]
+  end
