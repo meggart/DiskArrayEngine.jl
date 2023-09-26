@@ -25,6 +25,7 @@ Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 [compat]
 DiskArrays = "0.3"
 Interpolations = "0.14"
+Ipopt = "1"
 OffsetArrays = "1"
 Optimization = "3"
 StatsBase = "0.34"
