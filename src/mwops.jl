@@ -1,4 +1,6 @@
-using DiskArrays: DiskArrays, ChunkType, GridChunks
+using DiskArrays: DiskArrays, ChunkType, GridChunks, AbstractDiskArray
+using Zarr
+export InputArray, create_outwindows, GMDWop, create_outars
 
 internal_size(p) = last(last(p))-first(first(p))+1
 function steps_per_chunk(p,cs::ChunkType)
@@ -25,35 +27,25 @@ struct InputArray{A,LW<:LoopWindows}
     a::A
     lw::LW
 end
+function InputArray(a::AbstractArray;dimsmap = ntuple(identity,ndims(a)),windows = Base.OneTo.(size(a)))
+  length(dimsmap) == ndims(a) || throw(ArgumentError("number is dimensions in loop dimension map not equal to ndims(a)"))
+  length(windows) == ndims(a) || throw(ArgumentError("number of supplied loop windwos not equal to ndims(a)"))
+  lw = LoopWindows(ProductArray(to_window.(windows)),Val((dimsmap...,)))
+  InputArray(a,lw)
+end
 
-
+ismem(a::InputArray) = ismem(a.a)
+ismem(::AbstractDiskArray) = false
+ismem(::Any) = true
 getdata(c::InputArray) = c.a
 getloopinds(::LoopWindows{<:Any,IL}) where IL = IL 
 getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
 @inline getloopinds(c) = getloopinds(c.lw)
 @inline getsubndims(c) = getsubndims(c.lw)
 
-
-"""
-    struct MWOp
-
-A type holding information about the sliding window operation to be done over an existing dimension. 
-Field names:
-
-* `rtot` unit range denoting the full range of the operation
-* `parentchunks` list of chunk structures of the parent arrays
-* `w` size of the moving window, length-2 tuple with steps before and after center
-* `steps` range denoting the center coordinates for each step of the op
-* `outputs` ids of related outputs and indices of their dimension index
-"""
-struct MWOp{G<:ChunkType,P}
-    rtot::UnitRange{Int64}
-    parentchunks::G
-    steps::P
-    is_ordered::Bool
-end
-function MWOp(parentchunks; r = first(first(parentchunks)):last(last(parentchunks)), steps=ProcessingSteps(0,r),is_ordered=false)
-    MWOp(r, parentchunks, steps, is_ordered)
+function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base.OneTo.(s), chunks = ntuple(_->nothing,length(s)),ismem=false)
+  outrp = ProductArray(to_window.(windows))
+  (;lw=LoopWindows(outrp,Val((dimsmap...,))),chunks,ismem)
 end
 
 mysub(ia,t) = map(li->t[li],getloopinds(ia))
@@ -86,7 +78,7 @@ function getwindowsize(inars, outspecs)
     ntuple(i->d[i],imax)
   end
   function addsize!(ia,d)
-    map(size(ia.windows),getloopinds(ia)) do s,li
+    for (s,li) in zip(size(ia.windows),getloopinds(ia))
       if haskey(d,li)
         if d[li] != s
           error("Inconsistent Loop windows")
@@ -108,16 +100,17 @@ function GMDWop(inars, outspecs, f)
     GMDWop(inars,outspecs, f, s)
 end
 
-
-abstract type Emitter end
-struct DirectEmitter end
-
-
-abstract type Aggregator end
-
-struct ReduceAggregator{F}
-    op::F
+function create_outars(op,plan)
+  map(plan.output_chunkspecs,op.f.outtype) do outspec,rettype
+    chunks = DiskArrays.GridChunks(output_chunks(outspec,plan.lr))
+    chunksize = DiskArrays.approx_chunksize(chunks)
+    outsize = last.(last.(chunks.chunks))
+    retnmtype = Base.nonmissingtype(rettype)
+    if sizeof(rettype)*prod(outsize) > 1e8
+      zcreate(retnmtype,outsize...,path=tempname(),fill_value=typemin(retnmtype),chunks=chunksize,fill_as_missing=Missing <: rettype)
+    else
+      zeros(rettype,outsize)
+    end
+  end
 end
-
-
 
