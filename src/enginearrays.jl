@@ -126,15 +126,18 @@ get_infered_types(f,inputtypes) = Base.promote_op(f,inputtypes...)
 Statistics.median(a::EngineArray;dims=()) = mapslices(median,a;dims)
 
 function compute!(ret,a::DiskArrayEngine.GMWOPResult)
-    lr = DiskArrayEngine.optimize_loopranges(a.op,1e9,tol_low=0.2,tol_high=0.05,max_order=2)
-    outars = ntuple(i->Val(i)==a.ires ? ret : nothing,length(a.op.outspecs))
+    lr = DiskArrayEngine.optimize_loopranges(a.op,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
+    outars = create_outars(a.op,lr)
+    iout = findfirst(i->Val(i)===a.ires,1:length(outars))
+    if ret !== nothing
+        outars = Base.setindex(outars,ret,iout)
+    end
     r = DiskArrayEngine.LocalRunner(a.op,lr,outars,threaded=true)
     run(r)
-    ret
+    outars[iout]
 end
 function compute(a::DiskArrayEngine.GMWOPResult)
-    ret = zeros(eltype(a),size(a))
-    compute!(ret,a)
+    compute!(nothing,a)
 end
 
 struct EngineStyle{N} <: Base.Broadcast.AbstractArrayStyle{N} end

@@ -46,22 +46,34 @@ function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
         run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
     else
         lspl = get_loopsplitter(op)
+        @debug "Using $lspl to split loops"
         run_block_threaded(inow, lspl,op.f, inbuffers_wrapped, outbuffers_now)
     end
 end
 
-@noinline function run_block_single(loopRanges,f::UserOp,args...)
-    for cI in CartesianIndices(loopRanges)
-        innercode(cI,f,args...)
+function run_block_single(loopRanges,f::UserOp,args...)
+    Threads.@threads for cI in CartesianIndices(loopRanges)
+       innercode(cI,f,args...)
     end
 end
 
 @noinline function run_block_threaded(loopRanges,lspl,f::UserOp,args...)
     tri, ntri = split_loopranges_threads(lspl,loopRanges)
-    for i_nonthread in CartesianIndices(ntri)
-        Threads.@threads for i_thread in CartesianIndices(tri)
-            cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
-            innercode(cI,f,args...)
+    if isempty(tri) 
+        run_block_single(loopRanges,f,args...)
+    else
+        if isempty(ntri)
+            Threads.@threads for i_thread in CartesianIndices(tri)
+                cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                innercode(cI,f,args...)
+            end
+        else
+            for i_nonthread in CartesianIndices(ntri)
+                Threads.@threads for i_thread in CartesianIndices(tri)
+                    cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                    innercode(cI,f,args...)
+                end
+            end
         end
     end
 end
@@ -97,35 +109,46 @@ function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myout
     end
 end
 
-struct LocalRunner{OP,LR,OA,IB,OB,P}
-    op::OP
-    loopranges::LR
-    outars::OA
-    threaded::Bool
-    inbuffers_pure::IB
-    outbuffers::OB
-    progress::P
+plan_to_loopranges(lr) = lr
+plan_to_loopranges(lr::ExecutionPlan) = lr.lr
+
+struct LocalRunner
+    op
+    loopranges
+    outars
+    threaded
+    inbuffers_pure
+    outbuffers
+    progress
 end
-function LocalRunner(op,loopranges,outars;threaded=true,showprogress=true)
+function LocalRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
+    loopranges = plan_to_loopranges(exec_plan)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
     pm = showprogress ? Progress(length(loopranges)) : nothing
-    LocalRunner(op,loopranges,outars, threaded, inbuffers_pure,outbuffers,pm)
+    LocalRunner(op,plan_to_loopranges(loopranges),outars, threaded, inbuffers_pure,outbuffers,pm)
 end
 
 update_progress!(::Nothing) = nothing
 update_progress!(pm) = next!(pm)
 
 function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
+    run_loop(
+        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress,loopranges;groupspecs
+    )
+end
+
+@noinline function run_loop(::LocalRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges;groupspecs=nothing)
     for inow in loopranges
         @debug "inow = ", inow
-        inbuffers_wrapped = read_range.((inow,),runner.op.inars,runner.inbuffers_pure);
-        outbuffers_now = extract_outbuffer.((inow,),(loopranges,),runner.op.outspecs,runner.op.f.init,runner.op.f.buftype,runner.outbuffers)
-        run_block(runner.op,inow,inbuffers_wrapped,outbuffers_now,runner.threaded)
-        put_buffer.((inow,),runner.op.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
-        update_progress!(runner.progress)
+        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+        outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+        put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars,nothing)
+        update_progress!(progress)
     end
 end
+
 
 struct DistributedRunner{OP,LR,OA,IB,OB}
     op::OP
@@ -153,42 +176,42 @@ function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
 end
 
 
-function DiskArrayEngine.run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
-    if groupspecs !== nothing && :output_chunk in groupspecs
-        piddir = @spawn tempname()
-    else
-        piddir = nothing
-    end
-    cpool = runner.workers
-    op = runner.op
-    threaded = runner.threaded
-    pmap(cpool,loopranges) do stored, inow
-    #map(loopranges) do inow
-        println("inow = ", inow)
-        @debug "inow = ", inow
+# function DiskArrayEngine.run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
+#     if groupspecs !== nothing && :output_chunk in groupspecs
+#         piddir = @spawn tempname()
+#     else
+#         piddir = nothing
+#     end
+#     cpool = runner.workers
+#     op = runner.op
+#     threaded = runner.threaded
+#     pmap(cpool,loopranges) do stored, inow
+#     #map(loopranges) do inow
+#         println("inow = ", inow)
+#         @debug "inow = ", inow
 
-        inbuffers_pure,outbuffers = fetch(inbuf[myid()]),fetch(outbuf[myid()])
-        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+#         inbuffers_pure,outbuffers = fetch(inbuf[myid()]),fetch(outbuf[myid()])
+#         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
         
-        outbuffers_now = wrap_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
-        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+#         outbuffers_now = wrap_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+#         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
 
-        put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
+#         put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
 
-    end
-    if groupspecs !== nothing && :reducedim in groupspecs
-        @debug "Merging buffers"
-        collection_merged = foldl(values(runner.outbuffers)) do agg,buffers
-            buf = fetch(buffers)
-            merge_outbuffer_collection.(agg,buf)
-        end
-        @debug "Writing merged buffers"
-        map(collection_merged) do outbuffer
-            for (k,v) in outbuffer.buffers
-                @debug "Writing index $k"
-                put_buffer.((k,),runner.op.f.finalize, v, outbuffer, runner.outars, (piddir,))
-            end
-        end
-    end
-end
+#     end
+#     if groupspecs !== nothing && :reducedim in groupspecs
+#         @debug "Merging buffers"
+#         collection_merged = foldl(values(runner.outbuffers)) do agg,buffers
+#             buf = fetch(buffers)
+#             merge_outbuffer_collection.(agg,buf)
+#         end
+#         @debug "Writing merged buffers"
+#         map(collection_merged) do outbuffer
+#             for (k,v) in outbuffer.buffers
+#                 @debug "Writing index $k"
+#                 put_buffer.((k,),runner.op.f.finalize, v, outbuffer, runner.outars, (piddir,))
+#             end
+#         end
+#     end
+# end
 
