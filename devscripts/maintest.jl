@@ -1,150 +1,95 @@
-using Revise
 using DiskArrayEngine
+import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Zarr, DiskArrays, OffsetArrays
-using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
-  create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk
-using StatsBase: rle
+#using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
+#  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
+#  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
+#  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
+#  merge_outbuffer_collection, DistributedRunner
+using StatsBase: rle,mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true)
+using Logging
+using Distributed
+#global_logger(SimpleLogger(stdout,Logging.Debug))
+#global_logger(SimpleLogger(stdout))
+using LoggingExtras
+using Dagger
 
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true)
-t.attrs["units"]
-tvec = timedecode(t[:],t.attrs["units"])
-years, nts = rle(yearmonth.(tvec))
-cums = [0;cumsum(nts)]
-
-stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(nts)]
-
-
-stepveclat = 1:size(a,2)
-stepveclon = 1:size(a,1)
-
-rp = ProductArray((stepveclon,stepveclat,stepvectime))
-
-# rangeproduct[3]
-inars = (InputArray(a,LoopWindows(rp,Val((1,2,3)))),)
-
-
-outrp = ProductArray((stepveclat,1:length(stepvectime)))
-outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=false),)
-
-function myfunc(x)
-  all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
-end
-
-function reducefunc((n1,s1),(n2,s2))
-  (n1+n2,s1+s2)
-end
-init = ()->(0,zero(Float64))
-filters = (NoFilter(),)
-fin(x) = last(x)/first(x)
-outtypes = (Union{Float32,Missing},)
-args = ()
-kwargs = (;)
-f = create_userfunction(
-  myfunc,
-  Union{Float32,Missing},
-  red = reducefunc, 
-  init = init, 
-  finalize=fin,
-  buftype = Tuple{Int,Union{Float32,Missing}},  
-)
-
-f.buftype
-
-optotal = GMDWop(inars, outwindows, f)
-
-DiskArrays.approx_chunksize.(eachchunk(a).chunks)
-
-using OrderedCollections
-
-function kgv(i...)
-  f = LittleDict.(factor.(i))
-  prod((i)->first(i)^last(i),merge(max,f...))
-end
-kgv(i)=i
-kgv(90,60,70)
-
-optires = 1333
-intsizes = 1000
-smax=1_000_000
-find_adjust_candidates
-
-function find_adjust_candidates(optires,smax,intsizes;reltol=0.05,max_order=2)
-  smallest_common = kgv(intsizes...)
-  if optires > smallest_common
-    for ord in 1:max_order 
-      rr = round(Int,optires/smallest_common*ord)
-      if rr<smax && abs(rr-optires/smallest_common*ord)/(optires/smallest_common*ord)<reltol
-        return smallest_common * rr//ord
-      end
-    end
-    #Did not find a better candidate, try rounding
-    if abs(round(Int,optires)-optires)/optires < reltol
-      return round(Int,optires)
-    else
-      return floor(optires)
-    end
-  else
-
-  end
-end
-
-optires = 1333
-intsizes = (1000,)
-smax=1_000_000
-find_adjust_candidates(optires,smax,intsizes,max_order=3)
-
-DiskArrayEngine.optimize_loopranges(optotal,5e8)
-
-r, = results_as_diskarrays(optotal)
-rsub = r[300:310,200:210]
+using Test
 
 
 
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
 
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
 
-function fit_online!(xout,x)
-  if !all(ismissing,x) 
-    fit!(xout[],mean(skipmissing(x)))
-  end
-end
-init = ()->OnlineStats.Mean()
-filters = (NoFilter(),)
-fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
-f = create_userfunction(
-    fit_online!,
-    Float64,
-    is_mutating = true,
-    red = OnlineStats.merge!, 
-    init = init, 
-    finalize=fin_onine,
-    buftype = Mean,  
-)
+tvec = timedecode(t[:],t.attrs["units"]);
+groups = yearmonth.(tvec)
 
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
+aout = DAE.compute(r)
 
-optotal = GMDWop(inars, outwindows, f)
-
-
-r, = results_as_diskarrays(optotal)
-rsub = r[300:310,200:210]
-
-
-
-
-loopranges = ProductArray((eachchunk(a).chunks[1:2]...,DiskArrays.RegularChunks(120,0,480)))
-b = zeros(Union{Float32,Missing},size(a,2),length(stepvectime));
-outars = (InputArray(b,outwindows[1]),)
-DiskArrayEngine.run_loop(optotal,loopranges,outars)
+using Plots
+heatmap(aout)
 
 
 using Plots
-heatmap(b)
+heatmap(aout1[:,:])
+
+heatmap(aout2[:,:])
+
+aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
+r=DAE.LocalRunner(op,p,(aout2,))
+run(r)
+
+heatmap(aout2)
+
+years, nts = rle(yearmonth.(tvec));
+nts;
+
+#cums = [0;cumsum(nts)]
+
+    
+
+
+#stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(nts)]
+#length.(stepvectime)
+
+
+stepveclat = 1:size(a,2);
+stepveclon = 1:size(a,1);
+outsteps = outrepfromrle(nts);
+
+outsteps
+# rangeproduct[3]
+
+inars = (InputArray(a),);
+
+outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outsteps)),);
+
+outpath = tempname()
+
+f = disk_onlinestat(Mean)
+
+
+
+optotal = GMDWop(inars, outars, f);
+
+# r,  = results_as_diskarrays(optotal);
+
+# r[2:3,2]
+
+lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
+
+
+
+
 
 
 #Test for time to extract series of longitudes
@@ -157,10 +102,10 @@ function extract_slice(a,cs)
   r
 end
 csvec = [10:90;95:5:200]
-
+using Plots
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
-ticvec = [18,20,30,36,45,60,90,120,135,150,180]
+ticvec = [15,18,20,30,36,45,60,90,120,135,150,180]
 xticks!(p,ticvec)
 vline!(p,ticvec)
 
@@ -215,25 +160,19 @@ loopsize = (10000,10000)
 
 
 
+import DiskArrayEngine as DAE
+    using Zarr
 
+    lr = DAE.ProductArray(([i:i+3 for i in 1:4:28],[i:i for i in 1:3],[i:i+1 for i in 1:2:4]))
+    outspecs = DAE.create_outwindows((168,4),dimsmap=(1,3),windows=([i:(i+5) for i in range(1,step=6,length=28)],1:4))
 
-
-
-using BenchmarkTools, Skipper
-
-nanmin(x,y) = isnan(x) ? y : isnan(y) ? x : min(x,y)
-nanmax(x,y) = isnan(x) ? y : isnan(y) ? x : min(x,y)
-
-nanminimum(a;kwargs...) = reduce(nanmin,a;init=NaN,kwargs...)
-nanminimum(f,a;kwargs...) = mapreduce(f,nanmin,a;init=NaN,kwargs...)
-
-x = rand(10000,10);
-nanminimum(x,dims=1)
-
-skip(isnan,x) |> typeof
-
-x[rand(1:length(x),1000)] .= NaN;
-@benchmark reduce(nanmin,$x,dims=2,init=Inf)
-
-
-@benchmark minimum.(skip.(isnan, eachslice($x, dims=2)))
+    outar = zzeros(Float32,168,4,chunks = (48,2))
+    @test DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (12,1))
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (24,3))
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
