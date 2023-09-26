@@ -1,3 +1,5 @@
+using FileWatching.Pidfile
+
 struct ArrayBuffer{A,O,LW}
     a::A
     offsets::O
@@ -110,29 +112,38 @@ function get_bufferindices(r,outspecs)
 end
 get_bufferindices(r::BufferIndex,_) = r
 
-struct OutputAggregator{K,V,N}
+struct OutputAggregator{K,V,N,R}
     buffers::Dict{K,V}
     bufsize::NTuple{N,Int}
+    repeats::R
 end
 
 
 function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,red)
-    @assert o1.bufsize == o2.bufsize
+    if o1.bufsize != o2.bufsize
+        @info "Warning something is really of with buffer sizes"
+    end
     o3 = merge(o1.buffers,o2.buffers) do (n1,ntot1,b1),(n2,ntot2,b2)
         @debug myid(), "Merging aggregators of lengths ", n1[], " and ", n2[], " when total mustwrites is ", ntot1
         @assert b1.offsets == b2.offsets
-        @assert b1.lw == b2.lw
+        @assert b1.lw.lr == b2.lw.lr
+        @assert length(b1.lw.windows.members) == length(b2.lw.windows.members)
+        for (m1,m2) in zip(b1.lw.windows.members,b2.lw.windows.members)
+            @assert m1==m2
+        end
         @assert ntot1 == ntot2
         Ref(n1[]+n2[]),ntot1,ArrayBuffer(red.(b1.a,b2.a),b1.offsets,b1.lw)
     end
-    OutputAggregator(o3,o1.bufsize)
+    OutputAggregator(o3,o1.bufsize,o1.repeats)
 end
 
+buffer_mergefunc(red,_) = (buf1,buf2) -> merge_outbuffer_collection.(buf1,buf2,(red,))
+
 function merge_all_outbuffers(outbuffers,red)
-    @debug "Merging output buffers"
-    reduce(outbuffers) do buf1, buf2
-        res = merge_outbuffer_collection.(buf1,buf2,(red,))
-    end
+    @debug "Merging output buffers $(typeof(outbuffers))"
+    r = reduce(buffer_mergefunc(red,eltype(outbuffers)),outbuffers)
+    @debug "Successfully merged and returning $(typeof(r))"
+    r
 end
 
 function flush_all_outbuffers(outbuffers,fin,outars,piddir)
@@ -140,27 +151,42 @@ function flush_all_outbuffers(outbuffers,fin,outars,piddir)
     for (coll,outar,f) in zip(outbuffers,outars,fin)
         allkeys = collect(keys(coll.buffers))
         for k in allkeys
-            @debug "Writing index $k"
             put_buffer(k,f, last(coll.buffers[k]), coll, outar, piddir)
         end
     end
+    outbuffers
 end
   
 function generate_outbuffer_collection(ia,buftype,loopranges) 
     nd = getsubndims(ia)
     bufsize = getbufsize(ia,loopranges)
     d = Dict{BufferIndex{nd},Tuple{Base.RefValue{Int},Int,ArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(ia.lw)}}}()
-    OutputAggregator(d,bufsize)
+    reps = precompute_bufferrepeat(loopranges,ia)
+    OutputAggregator(d,bufsize,reps)
+end
+
+struct ConstDict{V}
+    val::V
+end
+Base.getindex(c::ConstDict,_) = c.val
+
+function precompute_bufferrepeat(lr, outspec)
+    r = [get_bufferindices(r,outspec) => bufferrepeat(r,lr,outspec.lw) for r in lr]
+    if allequal(last.(r))
+        ConstDict(last(first(r)))
+    else
+        Dict(r)
+    end
 end
 
 "Extracts or creates output buffer as an ArrayBuffer"
-function extract_outbuffer(r,lr,outspecs,init,buftype,buffer::OutputAggregator)
+function extract_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
     inds = get_bufferindices(r,outspecs)
     offsets = offset_from_range(inds)
     n,ntot,b = get!(buffer.buffers,inds) do 
         buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
         buf = ArrayBuffer(buf,offsets,outspecs.lw)
-        ntot = bufferrepeat(r,lr,outspecs.lw)
+        ntot = buffer.repeats[inds]
         (Ref(0),ntot,buf)
     end
     n[] = n[]+1 
@@ -192,10 +218,11 @@ function put_buffer(r, fin, bufnow, bufferdict, outar, piddir)
     r2 = range.(1 .+ skip1, skip1 .+ length.(inds2))
     if piddir !== nothing
         @debug "$(myid()) acquiring lock $piddir to write to $inds2"
-        mkpidlock(fetch(piddir),wait=true,stale_age=100) do
+        Pidfile.mkpidlock(piddir,wait=true,stale_age=100) do
             broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
         end
     else
+        @debug "$(myid()) Writing data without piddir to $inds2"
         broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
     end
     delete!(bufferdict.buffers,bufinds)

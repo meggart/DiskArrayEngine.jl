@@ -1,5 +1,5 @@
-using Revise
 using DiskArrayEngine
+import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Zarr, DiskArrays, OffsetArrays
@@ -8,7 +8,7 @@ using Zarr, DiskArrays, OffsetArrays
 #  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
 #  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
 #  merge_outbuffer_collection, DistributedRunner
-using StatsBase: rle
+using StatsBase: rle,mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
@@ -17,26 +17,44 @@ using Distributed
 #global_logger(SimpleLogger(stdout,Logging.Debug))
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
+using Dagger
 
 using Test
 
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true);
 
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true);
+
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
+
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
+
 tvec = timedecode(t[:],t.attrs["units"]);
+groups = yearmonth.(tvec)
+
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
+aout = DAE.compute(r)
+
+using Plots
+heatmap(aout)
+
+
+using Plots
+heatmap(aout1[:,:])
+
+heatmap(aout2[:,:])
+
+aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
+r=DAE.LocalRunner(op,p,(aout2,))
+run(r)
+
+heatmap(aout2)
+
 years, nts = rle(yearmonth.(tvec));
 nts;
 
 #cums = [0;cumsum(nts)]
-function outrepfromrle(nts)
-  r = Int[]
-  for i in 1:length(nts)
-    for _ in 1:nts[i]
-      push!(r,i)
-    end
-  end
-  r
-end
+
     
 
 
@@ -48,8 +66,7 @@ stepveclat = 1:size(a,2);
 stepveclon = 1:size(a,1);
 outsteps = outrepfromrle(nts);
 
-
-
+outsteps
 # rangeproduct[3]
 
 inars = (InputArray(a),);
@@ -57,7 +74,6 @@ inars = (InputArray(a),);
 outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outsteps)),);
 
 outpath = tempname()
-b = zzeros(Float32,size(a,2),length(outsteps),chunks = (90,480),fill_as_missing=true,path=outpath);
 
 f = disk_onlinestat(Mean)
 
@@ -65,215 +81,15 @@ f = disk_onlinestat(Mean)
 
 optotal = GMDWop(inars, outars, f);
 
-r,  = results_as_diskarrays(optotal);
+# r,  = results_as_diskarrays(optotal);
 
-r[2:3,2]
+# r[2:3,2]
 
 lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
-chunks = getproperty.(lr.members,:cs)[2:3];
-
-out1 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
-r = DiskArrayEngine.LocalRunner(optotal,lr,(out1,),threaded=true)
-run(r)
-
-using Plots
-heatmap(out1[:,:])
-
-out2 = zzeros(Float32,720,480,path=tempname(),chunks=chunks,fill_as_missing=true,fill_value=-1f32);
-
-
-# rmprocs(workers())
-# addprocs(4,exeflags="--project=$(@__DIR__)")
-# @everywhere begin
-# using DiskArrayEngine
-# using DiskArrays: ChunkType, RegularChunks
-# using Statistics
-# using Zarr, DiskArrays, OffsetArrays
-# using StatsBase: rle
-# using CFTime: timedecode
-# using Dates
-# using OnlineStats
-# using Logging
-# using Distributed
-  
-
-#   using LoggingExtras
-
-#   mylogger = EarlyFilteredLogger(ConsoleLogger(Logging.Debug)) do log
-#     (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >=Logging.Info
-#   end
-#   global_logger(mylogger)
-  
-# end
-
-mylogger = TransformerLogger(ConsoleLogger(Logging.Debug)) do log
-  if length(string(log.message)) > 256
-      short_message = string(log.message)[1:min(end, 256)] * "..."
-      return merge(log, (;message=short_message))
-  else
-      return log
-  end
-end;
-global_logger(mylogger)
-runner1 = DiskArrayEngine.DaggerRunner(optotal,lr,(out2,),threaded=true);
-run(runner1);
 
 
 
 
-# out2 = zeros(Union{Float32,Missing},720,480)
-# runner2 = LocalRunner(optotal,lr,(out2,),threaded=true)
-# run(runner2)
-
-
-using Plots
-heatmap(out2[:,:])
-
-unique(out1[:,:] - out2[:,:])
-
-error()
-out1[:,:]
-
-
-
-# function myfunc(x)
-#   all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
-# end
-
-# function reducefunc((n1,s1),(n2,s2))
-#   (n1+n2,s1+s2)
-# end
-# init = ()->(0,zero(Float64))
-# filters = (NoFilter(),)
-# fin(x) = last(x)/first(x)
-# outtypes = (Union{Float32,Missing},)
-# args = ()
-# kwargs = (;)
-# f = create_userfunction(
-#   myfunc,
-#   Union{Float32,Missing},
-#   red = reducefunc, 
-#   init = init, 
-#   finalize=fin,
-#   buftype = Tuple{Int,Union{Float32,Missing}},  
-# )
-
-
-# optotal = GMDWop(inars, outwindows, f)
-
-
-
-
-
-# r, = results_as_diskarrays(optotal)
-# rsub = r[300:310,200:210]
-
-outpath = tempname()
-b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (90,480),fill_as_missing=true,path=outpath);
-
-
-
-
-# function run_op(op,outars;max_cache=1e8,threaded=true)
-#   lr = DiskArrayEngine.optimize_loopranges(op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
-#   r = DiskArrayEngine.LocalRunner(optotal,lr,outars,threaded=threaded)
-#   run(r)
-# end
-
-# @time run_op(optotal, (b,),threaded=true,max_cache=1e9)
-
-# using Plots
-# heatmap(b[:,:])
-
-
-
-
-rmprocs(workers())
-addprocs(2)
-@everywhere begin
-  using DiskArrayEngine, Zarr, OnlineStats
-  function fit_online!(xout,x,f=identity)
-    fit!(xout[],f(x))
-  end
-  preproc(x) = mean(skipmissing(x))
-  init = ()->OnlineStats.Mean()
-  fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
-end
-f = create_userfunction(
-    fit_online!,
-    Float64,
-    is_mutating = true,
-    red = OnlineStats.merge!, 
-    init = init, 
-    finalize=fin_onine,
-    buftype = Mean,  
-    args = (preproc,)
-)
-optotal = GMDWop(inars, outwindows, f)
-
-lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
-runner = DistributedRunner(optotal, lr, (b,))
-groups = DiskArrayEngine.get_procgroups(runner.op, runner.loopranges, runner.outars)
-sch = DiskArrayEngine.DiskEngineScheduler(groups, runner.loopranges, runner)
-DiskArrayEngine.run_group(sch)
-
-r = runner.inbuffers_pure[2] |> fetch;
-
-inow = (91:180,631:720,1:480)
-
-lr = DiskArrayEngine.optimize_loopranges(optotal,3e7,tol_low=0.2,tol_high=0.05,max_order=2)
-
-outars= (b,)
-
-
-using DiskArrayEngine: get_procgroups
-
-using Distributed
-addprocs(2)
-
-@everywhere begin
-
-end
-
-
-data = ()->[1,2,3]
-p = DataPool(workers(),data)
-
-pmap(p,1:10) do data,i
-  println(i)
-  sum(data)
-end
-
-using Distributed
-addprocs(2)
-workerpool = CachingPool([2])
-push!(workerpool,3)
-@everywhere function distrtest(i)
-  println(i, " ", myid())
-  sleep(1)
-end
-r = @async pmap(distrtest, workerpool, 1:100)
-addprocs(2)
-@everywhere function distrtest(i)
-  println(i, " ", myid())
-  sleep(1)
-end
-push!(workerpool,4)
-push!(workerpool,5)
-
-
-
-
-
-struct ReducedimsGroup{P,N}
-  parent::P
-  dims::NTuple{N,Int}
-  is_foldl::Bool
-
-end
-
-using Plots
-heatmap(b)
 
 
 #Test for time to extract series of longitudes
@@ -286,10 +102,10 @@ function extract_slice(a,cs)
   r
 end
 csvec = [10:90;95:5:200]
-
+using Plots
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
-ticvec = [18,20,30,36,45,60,90,120,135,150,180]
+ticvec = [15,18,20,30,36,45,60,90,120,135,150,180]
 xticks!(p,ticvec)
 vline!(p,ticvec)
 
@@ -343,3 +159,20 @@ window = [1000,1000]
 loopsize = (10000,10000)
 
 
+
+import DiskArrayEngine as DAE
+    using Zarr
+
+    lr = DAE.ProductArray(([i:i+3 for i in 1:4:28],[i:i for i in 1:3],[i:i+1 for i in 1:2:4]))
+    outspecs = DAE.create_outwindows((168,4),dimsmap=(1,3),windows=([i:(i+5) for i in range(1,step=6,length=28)],1:4))
+
+    outar = zzeros(Float32,168,4,chunks = (48,2))
+    @test DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (12,1))
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (24,3))
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test DAE.is_output_chunk_overlap(outspecs,outar,3,lr)

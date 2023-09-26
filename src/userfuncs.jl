@@ -64,7 +64,9 @@ end
 
 
 applyfilter(f::UserOp,myinwork) = broadcast(docheck, f.filters, myinwork)
-apply_function(f::UserOp{<:ElementFunction{<:Any,<:Mutating}},xout,xin) = f.f.f(xout...,xin...,f.args...;f.kwargs...)
+function apply_function(f::UserOp{<:ElementFunction{<:Any,<:Mutating}},xout,xin) 
+    f.f.f(xout...,xin...,f.args...;f.kwargs...)
+end
 function apply_function(f::UserOp{<:ElementFunction{<:Any,<:NonMutating},Nothing},xout,xin)
     r = f.f.f(xin...,f.args...;f.kwargs...)
     if length(xout) == 1
