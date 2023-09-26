@@ -102,10 +102,10 @@ function extract_slice(a,cs)
   r
 end
 csvec = [10:90;95:5:200]
-
+using Plots
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
-ticvec = [18,20,30,36,45,60,90,120,135,150,180]
+ticvec = [15,18,20,30,36,45,60,90,120,135,150,180]
 xticks!(p,ticvec)
 vline!(p,ticvec)
 
