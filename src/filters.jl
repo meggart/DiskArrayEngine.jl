@@ -17,7 +17,7 @@ checkskip(::AnyMissing, x) = any(ismissing, x)
 checkskip(nv::NValid, x) = count(!ismissing, x) <= nv.n
 checkskip(uf::UserFilter, x) = uf.f(x)
 checkskip(::StdZero, x) = all(i -> i == x[1], x)
-docheck(pf::ProcFilter, x)::Bool = checkskip(pf, YAXArrayBase.getdata(x))
+docheck(pf::ProcFilter, x)::Bool = checkskip(pf, x)
 docheck(pf::Tuple, x) = reduce(|, map(i -> docheck(i, x), pf))
 
 getprocfilter(f::Function) = (UserFilter(f),)

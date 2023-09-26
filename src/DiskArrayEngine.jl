@@ -1,10 +1,20 @@
 module DiskArrayEngine
 
-
-include("PickAxisArrays.jl")
+include("auxtypes.jl")
+include("windows.jl")
 include("filters.jl")
+include("buffers.jl")
+include("userfuncs.jl")
 include("mwops.jl")
 include("executionplan.jl")
 include("runner.jl")
-
+include("diskarrayresults.jl")
+include("distribute.jl")
+include("enginearrays.jl")
+include("daggerrunner.jl")
+include("disjointranges.jl")
+include("util/interpolate.jl")
+include("util/onlinestats_helpers.jl")
+include("util/rechunk.jl")
+include("util/aggregate.jl")
 end

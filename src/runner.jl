@@ -1,168 +1,34 @@
 using Distributed: @spawn, AbstractWorkerPool
+using ProgressMeter: Progress, next!
 using Base.Cartesian
 
-updatears(clist, r, f, caches) =
-    foreach(clist, caches) do ic, ca
-        if !has_window(ic)
-            updatear(f, r, ic.cube, geticolon(ic), ic.loopinds, ca)
-        else
-            updatear_window(
-                r,
-                ic.cube,
-                geticolon(ic),
-                ic.loopinds,
-                ca,
-                zip(ic.iwindow, ic.window),
-                getwindowoob(ic),
-            )
-        end
-    end
-getindsall(indscol, loopinds, rfunc, colfunc = _ -> Colon()) =
-    getindsall((), 1, (sort(indscol)...,), (loopinds...,), rfunc, colfunc)
-function getindsall(indsall, inow, indscol, loopinds, rfunc, colfunc)
-    if !isempty(indscol) && first(indscol) == inow
-        getindsall(
-            (indsall..., colfunc(inow)),
-            inow + 1,
-            Base.tail(indscol),
-            loopinds,
-            rfunc,
-            colfunc,
-        )
-    else
-        getindsall(
-            (indsall..., rfunc(first(loopinds))),
-            inow + 1,
-            indscol,
-            Base.tail(loopinds),
-            rfunc,
-            colfunc,
-        )
-    end
-end
-getindsall(indsall, inow, ::Tuple{}, ::Tuple{}, r, c) = indsall
+#We do not make a view when accessing single values
+@inline _view(::Input, a,i::Int...) = a[i...]
+@inline _view(::Any, a,i...) = view(a,i...)
+@inline apply_offset(window,offset) = window .- offset
 
-function updatear(r, cube, cache,init)
-    data = getdata(cube)
-    
-    hinds = first.(oo)
-    indsall2 = last.(oo)
-    fill!(cache, windowoob)
-    cache[hinds...] = data[indsall2...]
+
+@inline function _view(x::ArrayBuffer,I,io)
+    ms = mysub(x,I)
+    windowsub = x.lw.windows[ms...]
+    inds = apply_offset.(windowsub,x.offsets)
+    _view(io, x.a,inds...)
 end
 
-function updatear(f, r, cube, indscol, loopinds, cache)
-    indsall = getindsall(indscol, loopinds, i -> r[i])
-    l2 = map((i, s) -> isa(i, Colon) ? s : length(i), indsall, size(cache))
-    if size(cache) != l2
-        hinds = map((i, s) -> isa(i, Colon) ? (1:s) : 1:length(i), indsall, size(cache))
-        if f == :read
-            cache[hinds...] = getdata(cube)[indsall...]
-        else
-            getdata(cube)[indsall...] = cache[hinds...]
-        end
-    else
-        if f == :read
-            d = getdata(cube)[indsall...]
-            cache[:] = d
-        else
-            _writedata(getdata(cube), cache, indsall)
-        end
-    end
-end
-_writedata(d,cache,indsall) = d[indsall...] = cache
-_writedata(d::Array{<:Any,0},cache::Array{<:Any,0},::Tuple{}) = d[] = cache[]
 
-
-updateinars(dc, r, incaches) = updatears(dc.incubes, r, :read, incaches)
-writeoutars(dc, r, outcaches) = updatears(dc.outcubes, r, :write, outcaches)
-
-function pmap_with_data(f, p::AbstractWorkerPool, c...; initfunc, progress=nothing, kwargs...)
-    d = Dict(ip=>remotecall(initfunc, ip) for ip in workers(p))
-    allrefs = @spawn d
-    function fnew(args...,)
-        refdict = fetch(allrefs)
-        myargs = fetch(refdict[myid()])
-        f(args..., myargs)
-    end
-    if progress !==nothing
-        progress_pmap(fnew,p,c...;progress=progress,kwargs...)
-    else
-        pmap(fnew,p,c...;kwargs...)
-    end
-end
-pmap_with_data(f,c...;initfunc,kwargs...) = pmap_with_data(f,default_worker_pool(),c...;initfunc,kwargs...) 
-
-function moduleloadedeverywhere()
-    try
-        isloaded = map(workers()) do w
-            #We try calling a function defined inside this module, thi will error when YAXArrays is not loaded on the remote workers
-            remotecall(() -> true, w)
-        end
-        fetch.(isloaded)
-    catch e
-        return false
-    end
-    return true
-end
-
-function runLoop(ec::EngineConfig, showprog)
-    allRanges = GridChunks(getloopchunks(ec)...)
-    if ec.ispar
-        #Test if YAXArrays is loaded on all workers:
-        moduleloadedeverywhere() || error(
-            "YAXArrays is not loaded on all workers. Please run `@everywhere using YAXArrays` to fix.",
-        )
-        dcref = @spawn ec
-        prepfunc = ()->getallargs(fetch(dcref))
-        prog = showprog ? Progress(length(allRanges)) : nothing
-        pmap_with_data(allRanges, initfunc=prepfunc, progress=prog) do r, prep
-            incaches, outcaches, args = prep
-            updateinars(dc, r, incaches)
-            innerLoop(r, args...)
-            writeoutars(dc, r, outcaches)
-        end
-    else
-        incaches, outcaches, args = getallargs(dc)
-        mapfun = showprog ? progress_map : map
-        mapfun(allRanges) do r
-            updateinars(dc, r, incaches)
-            innerLoop(r, args...)
-            writeoutars(dc, r, outcaches)
-        end
-    end
-    dc.outcubes
-end
-
-function allocatecachebuf(ic, loopcachesize)
-    s = size(ic.cube)
-    indsall = getindsall(geticolon(ic), ic.loopinds, i -> loopcachesize[i], i -> s[i])
-    if has_window(ic)
-        indsall = Base.OneTo.(indsall)
-        for (iw, (pre, after)) in zip(ic.iwindow, ic.window)
-            old = indsall[iw]
-            new = (first(old)-pre):(last(old)+after)
-            indsall = Base.setindex(indsall, new, iw)
-        end
-        #@show indsall
-        OffsetArray(Array{eltype(ic.cube)}(undef, length.(indsall)...), indsall...)
-    else
-        Array{eltype(ic.cube)}(undef,indsall...)
-    end
-end
 
 function innercode(
     cI,
     f,
-    xinBC,
-    xoutBC,
-)
+    xin,
+    xout,
+    )
     #Copy data into work arrays
-    myinwork = map(xinBC) do x
-        view(x, cI.I...)
+    myinwork = map(xin) do x
+        _view(x, cI.I, Input())
     end
-    myoutwork = map(xoutBC) do x
-        view(x, cI.I...)
+    myoutwork = map(xout) do x
+        _view(x, cI.I, Output())
     end
     #Apply filters
     mvs = applyfilter(f,myinwork)
@@ -175,14 +41,177 @@ function innercode(
     end
 end
 
-@noinline function innerLoop(loopRanges,args...)
-    for cI in CartesianIndices(map(i -> 1:length(i), loopRanges))
-        innercode(cI,args...)
+function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+    if !threaded
+        run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
+    else
+        lspl = get_loopsplitter(op)
+        @debug "Using $lspl to split loops"
+        run_block_threaded(inow, lspl,op.f, inbuffers_wrapped, outbuffers_now)
     end
 end
 
-@noinline function innerLoop_threaded(loopRanges,args...)
-    Threads.@threads for cI in CartesianIndices(map(i -> 1:length(i), loopRanges))
-        innercode(cI,args...)
+function run_block_single(loopRanges,f::UserOp,args...)
+    Threads.@threads for cI in CartesianIndices(loopRanges)
+       innercode(cI,f,args...)
     end
 end
+
+@noinline function run_block_threaded(loopRanges,lspl,f::UserOp,args...)
+    tri, ntri = split_loopranges_threads(lspl,loopRanges)
+    if isempty(tri) 
+        run_block_single(loopRanges,f,args...)
+    else
+        if isempty(ntri)
+            Threads.@threads for i_thread in CartesianIndices(tri)
+                cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                innercode(cI,f,args...)
+            end
+        else
+            for i_nonthread in CartesianIndices(ntri)
+                Threads.@threads for i_thread in CartesianIndices(tri)
+                    cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                    innercode(cI,f,args...)
+                end
+            end
+        end
+    end
+end
+
+function run_block(f::GMDWop{<:Any,<:Any,<:Any,<:UserOp{<:BlockFunction}},loopRanges,xin,xout,threaded)
+    i1 = first.(loopRanges)
+    i2 = last.(loopRanges)
+    myinwork = map(xin) do x
+        firsti = first.(x.lw.windows[mysub(x,i1)...])
+        lasti = last.(x.lw.windows[mysub(x,i2)...])
+        iw1 = apply_offset.(firsti,x.offsets)
+        iw2 = apply_offset.(lasti,x.offsets)
+        rr = range.(iw1,iw2)
+        OffsetArray(view(x.a, rr...),firsti .- 1)
+    end
+    myoutwork = map(xout) do x
+        firsti = first.(x.lw.windows[mysub(x,i1)...])
+        lasti = last.(x.lw.windows[mysub(x,i2)...])
+        iw1 = apply_offset.(firsti,x.offsets)
+        iw2 = apply_offset.(lasti,x.offsets)
+        rr = Base.IdentityUnitRange.(range.(iw1,iw2))
+        OffsetArray(view(x.a, rr...),firsti .- 1)
+    end
+    _run_block(f.f,myinwork,myoutwork,threaded)
+end
+function _run_block(f::UserOp{<:BlockFunction{<:Any,Mutating}},myinwork,myoutwork,threaded)
+    f.f.f(myoutwork...,myinwork...,f.args...;f.kwargs...,dims=getdims(f.f),threaded=threaded)
+end
+function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myoutwork,threaded)
+    r = f.f.f(myinwork...,f.args...;f.kwargs...,dims=getdims(f.f),threaded=threaded)
+    map(myoutwork,r) do o,ir
+        o .= ir
+    end
+end
+
+plan_to_loopranges(lr) = lr
+plan_to_loopranges(lr::ExecutionPlan) = lr.lr
+
+struct LocalRunner
+    op
+    loopranges
+    outars
+    threaded
+    inbuffers_pure
+    outbuffers
+    progress
+end
+function LocalRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
+    loopranges = plan_to_loopranges(exec_plan)
+    inbuffers_pure = generate_inbuffers(op.inars, loopranges)
+    outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
+    pm = showprogress ? Progress(length(loopranges)) : nothing
+    LocalRunner(op,plan_to_loopranges(loopranges),outars, threaded, inbuffers_pure,outbuffers,pm)
+end
+
+update_progress!(::Nothing) = nothing
+update_progress!(pm) = next!(pm)
+
+function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
+    run_loop(
+        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress,loopranges;groupspecs
+    )
+end
+
+@noinline function run_loop(::LocalRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges;groupspecs=nothing)
+    for inow in loopranges
+        @debug "inow = ", inow
+        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+        outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+        put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars,nothing)
+        update_progress!(progress)
+    end
+end
+
+
+struct DistributedRunner{OP,LR,OA,IB,OB}
+    op::OP
+    loopranges::LR
+    outars::OA
+    threaded::Bool
+    inbuffers_pure::IB
+    outbuffers::OB
+    workers::CachingPool
+end
+function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
+    inars = op.inars
+    makeinbuf = ()->begin
+        generate_inbuffers(inars, loopranges)
+    end
+    outspecs = op.outspecs
+    f = op.f
+    makeoutbuf = ()->begin
+        generate_outbuffers(outspecs,f, loopranges)
+    end
+    allinbuffers = makeinbuf
+    alloutbuffers = makeoutbuf
+
+    DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,CachingPool(w))
+end
+
+
+# function DiskArrayEngine.run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
+#     if groupspecs !== nothing && :output_chunk in groupspecs
+#         piddir = @spawn tempname()
+#     else
+#         piddir = nothing
+#     end
+#     cpool = runner.workers
+#     op = runner.op
+#     threaded = runner.threaded
+#     pmap(cpool,loopranges) do stored, inow
+#     #map(loopranges) do inow
+#         println("inow = ", inow)
+#         @debug "inow = ", inow
+
+#         inbuffers_pure,outbuffers = fetch(inbuf[myid()]),fetch(outbuf[myid()])
+#         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+        
+#         outbuffers_now = wrap_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+#         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+
+#         put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
+
+#     end
+#     if groupspecs !== nothing && :reducedim in groupspecs
+#         @debug "Merging buffers"
+#         collection_merged = foldl(values(runner.outbuffers)) do agg,buffers
+#             buf = fetch(buffers)
+#             merge_outbuffer_collection.(agg,buf)
+#         end
+#         @debug "Writing merged buffers"
+#         map(collection_merged) do outbuffer
+#             for (k,v) in outbuffer.buffers
+#                 @debug "Writing index $k"
+#                 put_buffer.((k,),runner.op.f.finalize, v, outbuffer, runner.outars, (piddir,))
+#             end
+#         end
+#     end
+# end
+
