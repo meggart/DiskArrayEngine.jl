@@ -70,7 +70,7 @@ function get_loopsplitter(nd,outspecs)
     alld = 1:nd
     outreduceinds = map(outspecs) do spec
       li = getloopinds(spec)
-      ioverlap = findall(i->!isa(i,NonOverlapping),spec.lw.windows.members)
+      ioverlap = findall(i->!isa(get_overlap(i),NonOverlapping),spec.lw.windows.members)
       union!(setdiff(alld,li),ioverlap)
     end
     allreddims = reduce(union!,outreduceinds,init=Int[])

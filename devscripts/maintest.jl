@@ -1,4 +1,3 @@
-using Revise
 using DiskArrayEngine
 import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
@@ -9,7 +8,7 @@ using Zarr, DiskArrays, OffsetArrays
 #  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
 #  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
 #  merge_outbuffer_collection, DistributedRunner
-using StatsBase: rle
+using StatsBase: rle,mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
@@ -24,31 +23,26 @@ using Test
 
 
 
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
 
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true);
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
+
 tvec = timedecode(t[:],t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-agg = DAE.DirectAggregator(DAE.create_userfunction(mean,Union{Float64,Missing}))
-dimspec = (3=>groups,1=>nothing,2=>8)
-op = DAE.gmwop_for_aggregator(agg,dimspec,a)
-
-p = DAE.optimize_loopranges(op,5e8)
-
-r = DAE.results_as_diskarrays(op)[1]
-
-p.lr
-
-p.lr
-cs = length.(first.(p.lr.members[2:3]))
-using Zarr
-aout = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
-r=DAE.DaggerRunner(op,p,(aout,))
-run(r)
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
+aout = DAE.compute(r)
 
 using Plots
-heatmap(aout[:,:])
+heatmap(aout)
+
+
+using Plots
+heatmap(aout1[:,:])
+
+heatmap(aout2[:,:])
 
 aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
 r=DAE.LocalRunner(op,p,(aout2,))
@@ -108,10 +102,10 @@ function extract_slice(a,cs)
   r
 end
 csvec = [10:90;95:5:200]
-
+using Plots
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
-ticvec = [18,20,30,36,45,60,90,120,135,150,180]
+ticvec = [15,18,20,30,36,45,60,90,120,135,150,180]
 xticks!(p,ticvec)
 vline!(p,ticvec)
 
@@ -165,3 +159,20 @@ window = [1000,1000]
 loopsize = (10000,10000)
 
 
+
+import DiskArrayEngine as DAE
+    using Zarr
+
+    lr = DAE.ProductArray(([i:i+3 for i in 1:4:28],[i:i for i in 1:3],[i:i+1 for i in 1:2:4]))
+    outspecs = DAE.create_outwindows((168,4),dimsmap=(1,3),windows=([i:(i+5) for i in range(1,step=6,length=28)],1:4))
+
+    outar = zzeros(Float32,168,4,chunks = (48,2))
+    @test DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (12,1))
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (24,3))
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test DAE.is_output_chunk_overlap(outspecs,outar,3,lr)

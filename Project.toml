@@ -20,10 +20,12 @@ Primes = "27ebfcd6-29c5-5fa9-bf4b-fb8fc14df3ae"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 
 [compat]
 Interpolations = "0.14"
 StatsBase = "0.34"
+Zarr = "0.9"
 julia = "1"
 
 [extras]

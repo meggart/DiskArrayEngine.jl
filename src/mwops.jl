@@ -1,5 +1,6 @@
 using DiskArrays: DiskArrays, ChunkType, GridChunks, AbstractDiskArray
-export InputArray, create_outwindows, GMDWop
+using Zarr
+export InputArray, create_outwindows, GMDWop, create_outars
 
 internal_size(p) = last(last(p))-first(first(p))+1
 function steps_per_chunk(p,cs::ChunkType)
@@ -97,5 +98,19 @@ end
 function GMDWop(inars, outspecs, f)
     s = getwindowsize(inars, outspecs)
     GMDWop(inars,outspecs, f, s)
+end
+
+function create_outars(op,plan)
+  map(plan.output_chunkspecs,op.f.outtype) do outspec,rettype
+    chunks = DiskArrays.GridChunks(output_chunks(outspec,plan.lr))
+    chunksize = DiskArrays.approx_chunksize(chunks)
+    outsize = last.(last.(chunks.chunks))
+    retnmtype = Base.nonmissingtype(rettype)
+    if sizeof(rettype)*prod(outsize) > 1e8
+      zcreate(retnmtype,outsize...,path=tempname(),fill_value=typemin(retnmtype),chunks=chunksize,fill_as_missing=Missing <: rettype)
+    else
+      zeros(rettype,outsize)
+    end
+  end
 end
 

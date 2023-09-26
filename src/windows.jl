@@ -47,6 +47,18 @@ end
 switchfunc(::Decreasing,x,y) = y,x
 switchfunc(::Increasing,x,y) = x,y
 
+function lt_range(x,y,lt)
+    if lt(first(x),first(y))
+        lt(last(y),last(x)) && throw(ArgumentError("Window a contains b"))
+        true
+    elseif lt(last(x),last(y))
+        lt(first(y),first(x)) && throw(ArgumentError("Window a contains b"))
+        true
+    else
+        false
+    end
+end
+
 function compute_overlap(r,ordering)
     f, r2 = Iterators.peel(r)
     init = (nequal=0,noverlap=0,lastr=f)
