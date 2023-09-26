@@ -1,3 +1,5 @@
+using FileWatching.Pidfile
+
 struct ArrayBuffer{A,O,LW}
     a::A
     offsets::O
@@ -23,79 +25,207 @@ function generate_inbuffers(inars,loopranges)
     end
 end
 
+is_init_callable(::Any) = Val{false}()
+is_init_callable(::Function) = Val{true}()
+is_init_callable(::Union{DataType,UnionAll}) = Val{true}()
 array_from_init(::Nothing,buftype,bufsize) = zeros(buftype,bufsize)
-array_from_init(init::Base.Callable,buftype,bufsize) = buftype[init() for _ in CartesianIndices(bufsize)]
-array_from_init(init,buftype,bufsize) = buftype[init for _ in CartesianIndices(bufsize)]
+array_from_init(init,buftype,bufsize) = array_from_init(init,is_init_callable(init),buftype,bufsize)
+array_from_init(init,::Val{true},buftype,bufsize) = buftype[init() for _ in CartesianIndices(bufsize)]
+array_from_init(init,::Val{false},buftype,bufsize) = buftype[init for _ in CartesianIndices(bufsize)]
 
 #buftype_from_init(_,ia) =
 
 "Create buffer for single output"
-function generate_raw_outbuffer(ia,init,buftype,bufsize) 
-    array_from_init(init,ia,buftype,bufsize)
+function generate_raw_outbuffer(init,buftype,bufsize) 
+    array_from_init(init,buftype,bufsize)
 end
 
-bufferrepeat(ia,loopranges) = prod(size(loopranges)) ÷ prod(mysub(ia,size(loopranges)))
+compute_repeat(w,l,i) = compute_repeat(get_overlap(w),w,l,i)
+compute_repeat(::NonOverlapping,_,_,_) = 1
+compute_repeat(::Overlapping,_,_,_) = error("Not implemented yet")
+function compute_repeat(::Repeating,w,l,i)
+    i_current_looprange = findfirst(isequal(i),l)
+    w1 = w[first(i)]
+    first_window_occurrence = findfirst(==(w1),w)
+    n_before = if first_window_occurrence < first(i)
+        firstaffectedlooprange = findfirst(i->in(first_window_occurrence,i),l)
+        all(==(w1),w[firstaffectedlooprange]) || error("Windows of repeated outputs don't align")
+        i_current_looprange - firstaffectedlooprange
+    else
+        0
+    end
+    w2 = w[last(i)]
+    last_window_occurrence = findlast(==(w2),w)
+    n_after = if last_window_occurrence > last(i)
+        lastaffectedlooprange = findlast(i->in(last_window_occurrence,i),l)
+        all(==(w2),w[lastaffectedlooprange]) || error("Windows of repeated outputs don't align")
+        lastaffectedlooprange - i_current_looprange
+    else
+        0
+    end
+    return 1+n_before+n_after
+end
 
+"""
+Compute how often a buffer needs to be passed to the computation before it can be flushed to the
+output array
+"""
+function bufferrepeat(ind,loopranges,lw) 
+    # Repeats because a dimension is missing from the loop
+    baserep = prod(size(loopranges)) ÷ prod(mysub(lw,size(loopranges)))
+    windowmembers = lw.windows.members
+    mylr = mysub(lw,loopranges.members)
+    myind = mysub(lw,ind)
+    @assert length(windowmembers) == length(mylr)
+    innerrepeat = map(windowmembers,mylr,myind) do w,l,i
+        r = compute_repeat(w,l,i)
+        r
+    end
+    baserep * prod(innerrepeat)
+end
 
-"Creates buffers for all outputs"
+"Creates buffers for all outputs, results in a tuple of Dicts holding the collection for each output"
 function generate_outbuffers(outars,func,loopranges)
-    generate_outbuffer_collection.(outars,func.init,func.buftype,(loopranges,))
+    generate_outbuffer_collection.(outars,func.buftype,(loopranges,))
 end
 
+struct BufferIndex{N}
+    indranges::NTuple{N,UnitRange{Int}}
+end
 offset_from_range(r) = first(r) .- 1
+offset_from_range(r::BufferIndex) = offset_from_range.(r.indranges)
 
 "Reads data from input array `ia` along domain `r` into `buffer`"
 function read_range(r,ia,buffer)
     fill!(buffer,zero(eltype(buffer)))
     inds = get_bufferindices(r,ia)
-    buffer[Base.OneTo.(length.(inds))...] = ia.a[inds...]
-    ArrayBuffer(buffer,offset_from_range.(inds),ia.lw)
+    buffer[Base.OneTo.(length.(inds.indranges))...] = ia.a[inds.indranges...]
+    ArrayBuffer(buffer,offset_from_range(inds),ia.lw)
 end
 
-function get_bufferindices(r,ia)
-    mywindowrange = mysub(ia,r)
-    map(ia.lw.windows.members,mywindowrange) do w,r
+function get_bufferindices(r,outspecs)
+    mywindowrange = mysub(outspecs,r)
+    BufferIndex(map(outspecs.lw.windows.members,mywindowrange) do w,r
         i = w[r]
         first(first(i)):last(last(i))
-    end
+    end)
 end
+get_bufferindices(r::BufferIndex,_) = r
 
-struct OutputAggregator{K,V,N}
+struct OutputAggregator{K,V,N,R}
     buffers::Dict{K,V}
     bufsize::NTuple{N,Int}
-    nrep::Int
+    repeats::R
+end
+
+
+function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,red)
+    if o1.bufsize != o2.bufsize
+        @info "Warning something is really of with buffer sizes"
+    end
+    o3 = merge(o1.buffers,o2.buffers) do (n1,ntot1,b1),(n2,ntot2,b2)
+        @debug myid(), "Merging aggregators of lengths ", n1[], " and ", n2[], " when total mustwrites is ", ntot1
+        @assert b1.offsets == b2.offsets
+        @assert b1.lw.lr == b2.lw.lr
+        @assert length(b1.lw.windows.members) == length(b2.lw.windows.members)
+        for (m1,m2) in zip(b1.lw.windows.members,b2.lw.windows.members)
+            @assert m1==m2
+        end
+        @assert ntot1 == ntot2
+        Ref(n1[]+n2[]),ntot1,ArrayBuffer(red.(b1.a,b2.a),b1.offsets,b1.lw)
+    end
+    OutputAggregator(o3,o1.bufsize,o1.repeats)
+end
+
+buffer_mergefunc(red,_) = (buf1,buf2) -> merge_outbuffer_collection.(buf1,buf2,(red,))
+
+function merge_all_outbuffers(outbuffers,red)
+    @debug "Merging output buffers $(typeof(outbuffers))"
+    r = reduce(buffer_mergefunc(red,eltype(outbuffers)),outbuffers)
+    @debug "Successfully merged and returning $(typeof(r))"
+    r
+end
+
+function flush_all_outbuffers(outbuffers,fin,outars,piddir)
+    @assert length(outbuffers) == length(outars) == length(fin)
+    for (coll,outar,f) in zip(outbuffers,outars,fin)
+        allkeys = collect(keys(coll.buffers))
+        for k in allkeys
+            put_buffer(k,f, last(coll.buffers[k]), coll, outar, piddir)
+        end
+    end
+    outbuffers
 end
   
-function generate_outbuffer_collection(ia,init,buftype,loopranges) 
+function generate_outbuffer_collection(ia,buftype,loopranges) 
     nd = getsubndims(ia)
     bufsize = getbufsize(ia,loopranges)
-    nrep = bufferrepeat(ia,loopranges)
-    d = Dict{NTuple{nd,Int},Tuple{Base.RefValue{Int},Array{buftype,nd}}}()
-    OutputAggregator(d,bufsize,nrep)
+    d = Dict{BufferIndex{nd},Tuple{Base.RefValue{Int},Int,ArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(ia.lw)}}}()
+    reps = precompute_bufferrepeat(loopranges,ia)
+    OutputAggregator(d,bufsize,reps)
 end
 
-"Wraps output buffer into an ArrayBuffer"
-function wrap_outbuffer(r,ia,init,buftype,buffer::OutputAggregator)
-    inds = get_bufferindices(r,ia)
-    offsets = offset_from_range.(inds)
-    n,b = get!(buffer.buffers,offsets) do 
-        buf = generate_raw_outbuffer(ia,init,buftype,buffer.bufsize)
-        (Ref(0),buf)
+struct ConstDict{V}
+    val::V
+end
+Base.getindex(c::ConstDict,_) = c.val
+
+function precompute_bufferrepeat(lr, outspec)
+    r = [get_bufferindices(r,outspec) => bufferrepeat(r,lr,outspec.lw) for r in lr]
+    if allequal(last.(r))
+        ConstDict(last(first(r)))
+    else
+        Dict(r)
+    end
+end
+
+"Extracts or creates output buffer as an ArrayBuffer"
+function extract_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
+    inds = get_bufferindices(r,outspecs)
+    offsets = offset_from_range(inds)
+    n,ntot,b = get!(buffer.buffers,inds) do 
+        buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
+        buf = ArrayBuffer(buf,offsets,outspecs.lw)
+        ntot = buffer.repeats[inds]
+        (Ref(0),ntot,buf)
     end
     n[] = n[]+1 
-    ArrayBuffer(b,offsets,ia.lw)
+    b
 end
 
+
 "Check if maximum number of aggregations has happened for a buffer"
-mustwrite(buf, bufdict) = first(bufdict.buffers[buf.offsets])[] == bufdict.nrep
+function mustwrite(inds,bufdict) 
+    n_written,ntot,_ = bufdict.buffers[inds]
+    if n_written[] > ntot
+        error("Something is wrong, buffer got wrapped more often than it should. Make sure to use a runner only once")
+    else
+        n_written[] == ntot
+    end
+end
 
 "Checks if output buffers have accumulated to the end and exports to output array"
-function put_buffer(r, fin, bufnow, bufferdict, ia)
-  if mustwrite(bufnow,bufferdict)
-    inds = get_bufferindices(r,bufnow)
-    offsets = offset_from_range.(inds)
-    broadcast!(fin,view(ia.a,inds...),bufnow.a[Base.OneTo.(length.(inds))...])
-    delete!(bufferdict.buffers,offsets)
+function put_buffer(r, fin, bufnow, bufferdict, outar, piddir)
+  bufinds = get_bufferindices(r,bufnow)
+  if mustwrite(bufinds,bufferdict)
+    offsets = offset_from_range(bufinds)
+    i1 = first.(axes(outar))
+    i2 = last.(axes(outar))
+    inds = bufinds.indranges
+    skip1 = max.(0,i1.-first.(inds))
+    skip2 = max.(0,last.(inds).-i2)
+    inds2 = range.(first.(inds).+skip1,last.(inds).-skip2)
+    r2 = range.(1 .+ skip1, skip1 .+ length.(inds2))
+    if piddir !== nothing
+        @debug "$(myid()) acquiring lock $piddir to write to $inds2"
+        Pidfile.mkpidlock(piddir,wait=true,stale_age=100) do
+            broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
+        end
+    else
+        @debug "$(myid()) Writing data without piddir to $inds2"
+        broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
+    end
+    delete!(bufferdict.buffers,bufinds)
     true
   else
     false
