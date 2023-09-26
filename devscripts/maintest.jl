@@ -1,201 +1,95 @@
-using Revise
 using DiskArrayEngine
+import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
 using Zarr, DiskArrays, OffsetArrays
-using DiskArrayEngine: MWOp, PickAxisArray, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
-  create_buffers, read_range, wrap_outbuffer, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
-  merge_outbuffer_collection, DistributedRunner
-using StatsBase: rle
+#using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
+#  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
+#  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
+#  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
+#  merge_outbuffer_collection, DistributedRunner
+using StatsBase: rle,mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
 using Logging
 using Distributed
-global_logger(SimpleLogger(stdout,Logging.Debug))
+#global_logger(SimpleLogger(stdout,Logging.Debug))
+#global_logger(SimpleLogger(stdout))
+using LoggingExtras
+using Dagger
 
-
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature_2m/", fill_as_missing=true)
-
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true)
-t.attrs["units"]
-tvec = timedecode(t[:],t.attrs["units"])
-years, nts = rle(yearmonth.(tvec))
-cums = [0;cumsum(nts)]
-
-stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(nts)]
-
-
-stepveclat = 1:size(a,2)
-stepveclon = 1:size(a,1)
-
-rp = ProductArray((stepveclon,stepveclat,stepvectime))
-
-# rangeproduct[3]
-inars = (InputArray(a,LoopWindows(rp,Val((1,2,3)))),)
-
-
-outrp = ProductArray((stepveclat,1:length(stepvectime)))
-outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=false),)
-
-# function myfunc(x)
-#   all(ismissing,x) ? (0,zero(eltype(x))) : (1,mean(skipmissing(x)))
-# end
-
-# function reducefunc((n1,s1),(n2,s2))
-#   (n1+n2,s1+s2)
-# end
-# init = ()->(0,zero(Float64))
-# filters = (NoFilter(),)
-# fin(x) = last(x)/first(x)
-# outtypes = (Union{Float32,Missing},)
-# args = ()
-# kwargs = (;)
-# f = create_userfunction(
-#   myfunc,
-#   Union{Float32,Missing},
-#   red = reducefunc, 
-#   init = init, 
-#   finalize=fin,
-#   buftype = Tuple{Int,Union{Float32,Missing}},  
-# )
-
-
-# optotal = GMDWop(inars, outwindows, f)
-
-
-# function fit_online!(xout,x,f=identity)
-#   fit!(xout[],f(x))
-# end
-# preproc(x) = mean(skipmissing(x))
-# init = ()->OnlineStats.Mean()
-# filters = (NoFilter(),)
-# fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
-# f = create_userfunction(
-#     fit_online!,
-#     Float64,
-#     is_mutating = true,
-#     red = OnlineStats.merge!, 
-#     init = init, 
-#     finalize=fin_onine,
-#     buftype = Mean,  
-#     args = (preproc,)
-# )
+using Test
 
 
 
-# r, = results_as_diskarrays(optotal)
-# rsub = r[300:310,200:210]
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
 
+a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
+t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
 
-outwindows = ((lw=LoopWindows(outrp,Val((2,3))),chunks=(nothing, nothing),ismem=true),)
-outpath = tempname()
-b = zzeros(Float32,size(a,2),length(stepvectime),chunks = (90,480),fill_as_missing=true,path=outpath);
+tvec = timedecode(t[:],t.attrs["units"]);
+groups = yearmonth.(tvec)
 
-
-
-# function run_op(op,outars;max_cache=1e8,threaded=true)
-#   lr = DiskArrayEngine.optimize_loopranges(op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
-#   r = DiskArrayEngine.LocalRunner(optotal,lr,outars,threaded=threaded)
-#   run(r)
-# end
-
-# @time run_op(optotal, (b,),threaded=true,max_cache=1e9)
-
-# using Plots
-# heatmap(b[:,:])
-
-
-
-
-rmprocs(workers())
-addprocs(2)
-@everywhere begin
-  using DiskArrayEngine, Zarr, OnlineStats
-  function fit_online!(xout,x,f=identity)
-    fit!(xout[],f(x))
-  end
-  preproc(x) = mean(skipmissing(x))
-  init = ()->OnlineStats.Mean()
-  fin_onine(x) = nobs(x) == 0 ? missing : OnlineStats.value(x)
-end
-f = create_userfunction(
-    fit_online!,
-    Float64,
-    is_mutating = true,
-    red = OnlineStats.merge!, 
-    init = init, 
-    finalize=fin_onine,
-    buftype = Mean,  
-    args = (preproc,)
-)
-optotal = GMDWop(inars, outwindows, f)
-
-lr = DiskArrayEngine.optimize_loopranges(optotal,1e8,tol_low=0.2,tol_high=0.05,max_order=2)
-runner = DistributedRunner(optotal, lr, (b,))
-groups = DiskArrayEngine.get_procgroups(runner.op, runner.loopranges, runner.outars)
-sch = DiskArrayEngine.DiskEngineScheduler(groups, runner.loopranges, runner)
-DiskArrayEngine.run_group(sch)
-
-r = runner.inbuffers_pure[2] |> fetch;
-
-inow = (91:180,631:720,1:480)
-
-lr = DiskArrayEngine.optimize_loopranges(optotal,3e7,tol_low=0.2,tol_high=0.05,max_order=2)
-
-outars= (b,)
-
-
-using DiskArrayEngine: get_procgroups
-
-using Distributed
-addprocs(2)
-
-@everywhere begin
-
-end
-
-
-data = ()->[1,2,3]
-p = DataPool(workers(),data)
-
-pmap(p,1:10) do data,i
-  println(i)
-  sum(data)
-end
-
-using Distributed
-addprocs(2)
-workerpool = CachingPool([2])
-push!(workerpool,3)
-@everywhere function distrtest(i)
-  println(i, " ", myid())
-  sleep(1)
-end
-r = @async pmap(distrtest, workerpool, 1:100)
-addprocs(2)
-@everywhere function distrtest(i)
-  println(i, " ", myid())
-  sleep(1)
-end
-push!(workerpool,4)
-push!(workerpool,5)
-
-
-
-
-
-struct ReducedimsGroup{P,N}
-  parent::P
-  dims::NTuple{N,Int}
-  is_foldl::Bool
-
-end
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
+aout = DAE.compute(r)
 
 using Plots
-heatmap(b)
+heatmap(aout)
+
+
+using Plots
+heatmap(aout1[:,:])
+
+heatmap(aout2[:,:])
+
+aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
+r=DAE.LocalRunner(op,p,(aout2,))
+run(r)
+
+heatmap(aout2)
+
+years, nts = rle(yearmonth.(tvec));
+nts;
+
+#cums = [0;cumsum(nts)]
+
+    
+
+
+#stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(nts)]
+#length.(stepvectime)
+
+
+stepveclat = 1:size(a,2);
+stepveclon = 1:size(a,1);
+outsteps = outrepfromrle(nts);
+
+outsteps
+# rangeproduct[3]
+
+inars = (InputArray(a),);
+
+outars = (create_outwindows((720,480), dimsmap=(2,3),windows = (stepveclat,outsteps)),);
+
+outpath = tempname()
+
+f = disk_onlinestat(Mean)
+
+
+
+optotal = GMDWop(inars, outars, f);
+
+# r,  = results_as_diskarrays(optotal);
+
+# r[2:3,2]
+
+lr = DiskArrayEngine.optimize_loopranges(optotal,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
+
+
+
+
 
 
 #Test for time to extract series of longitudes
@@ -208,10 +102,10 @@ function extract_slice(a,cs)
   r
 end
 csvec = [10:90;95:5:200]
-
+using Plots
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
-ticvec = [18,20,30,36,45,60,90,120,135,150,180]
+ticvec = [15,18,20,30,36,45,60,90,120,135,150,180]
 xticks!(p,ticvec)
 vline!(p,ticvec)
 
@@ -266,127 +160,19 @@ loopsize = (10000,10000)
 
 
 
-using Interpolations: Interpolations, weightedindexes, itpinfo, value_weights, InterpGetindex, coefficients, tweight, tcoef, prefilter, 
-  copy_with_padding, prefilter!, degree, prefiltering_system, popwrapper
+import DiskArrayEngine as DAE
+    using Zarr
 
-A_x1 = 1:.1:10
-A_x2 = 1:.5:20
-f(x1, x2) = log(x1+x2)
-A = [f(x1,x2) for x1 in A_x1, x2 in A_x2]
-A[1:2, :] .= NaN
-A[:, 1:2] .= NaN
+    lr = DAE.ProductArray(([i:i+3 for i in 1:4:28],[i:i for i in 1:3],[i:i+1 for i in 1:2:4]))
+    outspecs = DAE.create_outwindows((168,4),dimsmap=(1,3),windows=([i:(i+5) for i in range(1,step=6,length=28)],1:4))
 
-
-it = BSpline(Cubic(Line(OnGrid())))
-it = BSpline(Linear())
-ret = copy_with_padding(Float64, A, it)
-@which prefilter!(Float64, ret, it)
-
-@which prefilter(tweight(A), tcoef(A), A, it)
-
-sz = size(ret)
-first = true
-#for dim in 1:ndims(ret)
-dim = 1
-M, b = prefiltering_system(Float64, Float64, sz[dim], degree(it))
-popwrapper(ret)
-
-@which Interpolations.A_ldiv_B_md!(popwrapper(ret), M, popwrapper(ret), dim, b)
-#end
-    ret
-
-Apad = prefilter(tweight(A), tcoef(A), A, it)
-
-
-
-@which interpolate(, ,A, it)
-
-
-
-
-itp = interpolate(A, BSpline(Linear()))
-
-x  =(1.5,2.5)
-
-wis = weightedindexes((value_weights,), itpinfo(itp)..., x)
-
-@which coefficients(itp)
-
-InterpGetindex(itp)
-
-@which InterpGetindex(itp)
-
-
-itpgi[wis...]
-
-interp_getindex(A.coeffs, ntuple(_ -> 0, Val(N)), map(indexflag, I)...)
-
-
-using Test
-
-using DiskArrayEngine: LoopIndSplitter, threadinds, nonthreadinds, get_back
-# Define some helper functions
-
-# Create a CartesianIndex from a tuple
-ci(t::Tuple) = CartesianIndex(t...)
-
-# Define some test cases
-
-function test_threadinds()
-  lspl = LoopIndSplitter{(1,3),(2,4),()}()
-  lr = ci((10, 20, 30, 40))
-  @test threadinds(lspl, lr) == (10, 30)
-end
-
-test_threadinds()
-
-function test_nonthreadinds()
-  lspl = LoopIndSplitter{(1,3),(2,4),()}()
-  lr = ci((10, 20, 30, 40))
-  @test nonthreadinds(lspl, lr) == (20, 40)
-end
-
-test_nonthreadinds()
-
-function test_get_back()
-  lspl = LoopIndSplitter{(1,3),(2,4),()}()
-  @test get_back(lspl) == (false, 1), (false, 3), (false, 2), (false, 4)
-end
-
-function test_LoopIndSplitter()
-  lspl = LoopIndSplitter{(),(1,3,4),(2)}(4,(1,3))
-  @test get_back(lspl) == (true, 1), (false, 2), (true, 3), (true, 2)
-end
-
-function test_split_loopranges_threads()
-  lspl = LoopIndSplitter{(1,3),(2,4),()}()
-  lr = ci((10, 20, 30, 40))
-  threads, nonthreads = split_loopranges_threads(lspl, lr)
-  @test threads == ci((10, 30)), ci((20, 40))
-  @test nonthreads == ci((20, 40)), ci((10, 30))
-end
-
-function test_merge_loopranges_threads()
-  lspl = LoopIndSplitter{(1,3),(2,4),()}()
-  i_tr = ci((5, 10))
-  i_ntr = ci((20, 30))
-  @test merge_loopranges_threads(i_tr, i_ntr, lspl) == ci((5, 20, 10, 30))
-end
-
-function test_get_loopsplitter()
-  outspecs = ["1i2o", "2i1o", "2i2o"]
-  nd = 4
-  lspl = get_loopsplitter(nd, outspecs)
-  @test get_back(lspl) == (false, 3), (false, 4), (false, 1), (false, 2)
-end
-
-# Run the tests
-@testset "LoopIndSplitter tests" begin
-  test_threadinds()
-  test_nonthreadinds()
-  test_get_back()
-  test_LoopIndSplitter()
-  test_split_loopranges_threads()
-  test_merge_loopranges_threads()
-  test_get_loopsplitter()
-end
+    outar = zzeros(Float32,168,4,chunks = (48,2))
+    @test DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (12,1))
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+    outar = zzeros(Float32,168,4,chunks = (24,3))
+    @test !DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
+    @test DAE.is_output_chunk_overlap(outspecs,outar,3,lr)

@@ -28,15 +28,7 @@ struct RegularWindows <: AbstractVector{UnitRange{Int}}
     i0:min((i0+r.window-1),r.stop)
   end
 
-struct MovingWindow <: AbstractVector{UnitRange{Int}}
-  first::Int
-  steps::Int
-  width::Int
-  n::Int
-end
-Base.size(m::MovingWindow) = (m.n,)
-Base.getindex(m::MovingWindow,i::Int) = (m.first+(i-1)*m.steps):(m.first+(i-1)*m.steps+m.width-1)
-  
+
 "Type used for dispatch to show something is done in input mode"
 struct Input end
 
@@ -78,9 +70,11 @@ function get_loopsplitter(nd,outspecs)
     alld = 1:nd
     outreduceinds = map(outspecs) do spec
       li = getloopinds(spec)
-      setdiff(alld,li)
+      ioverlap = findall(i->!isa(get_overlap(i),NonOverlapping),spec.lw.windows.members)
+      union!(setdiff(alld,li),ioverlap)
     end
     allreddims = reduce(union!,outreduceinds,init=Int[])
+    @debug "Reducedims are $allreddims"
     LoopIndSplitter(nd,(allreddims...,))
   end
 

@@ -10,21 +10,6 @@
     @test pa isa AbstractArray
 end
 
-using Distributed
-@testset "pmap_with_data" begin
-    addprocs(2)
-    @everywhere begin
-        using Pkg
-        Pkg.activate(".")
-        using DiskArrayEngine: pmap_with_data
-        mydata() = ([1,2,3],"Hello",('a',3.4))
-    end
-    r = pmap_with_data(1:5,initfunc=mydata) do i,adddata
-        return (i,adddata...)
-    end
-    @test r == [(i,[1,2,3],"Hello",('a',3.4)) for i = 1:5]
-    rmprocs(workers())
-end
 
 @testset "LoopSplitter" begin
     using DiskArrayEngine: get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LoopWindows

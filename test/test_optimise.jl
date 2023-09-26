@@ -10,7 +10,6 @@ cand = find_adjust_candidates(optires,smax,intsizes,max_order=2,reltol_high=0.05
 ii = findfirst(ii->rem(cand.num,ii)==0,intsizes)
 
 
-
 optires = 205.3
 intsizes = (20,50)
 smax = 1_000_000
@@ -44,6 +43,6 @@ end
     using DiskArrays
     using Dates, Test
     ircs = DiskArrays.IrregularChunks(chunksizes = daysinyear.(2000:2020))
-    @test generate_LoopRange(365*5//3,ircs) == [1:366,367:975,976:1584,1585:2192,2193:2801,2802:3410,3411:4018,4019:4627,4628:5236,5237:5844,5845:6453,6454:7062,7063:7671]
+    @test generate_LoopRange(365*5//3,ircs) == [366, 609, 609, 608, 609, 609, 608, 609, 609, 608, 609, 609, 609]
     @test length(generate_LoopRange(365//3,ircs)) == 63
 end

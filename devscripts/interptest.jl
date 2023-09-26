@@ -1,4 +1,3 @@
-using Revise
 using DiskArrayEngine
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
@@ -15,113 +14,75 @@ a = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/air_temperature
 
 t = zopen("/home/fgans/data/esdc-8d-0.25deg-184x90x90-2.1.1.zarr/time/", fill_as_missing=true)
 
-function getinterpinds(oldvals::AbstractRange, newvals::AbstractRange)
-  (newvals.-first(oldvals))./step(oldvals).+1
-end
-function getinterpinds(r1,r2)
-  rev = issorted(r1) ? false : issorted(r1,rev=true) ? true : error("Axis values are not sorted")
-  map(r2) do ir
-    ii = searchsortedfirst(r1,ir,rev=rev)
-    ii1 = max(min(ii-1,length(r1)),1)
-    ii2 = max(min(ii,length(r1)),1)
-    ind = if ii1 == ii2
-      Float64(ii1)
-    else
-      ii1+(ir-r1[ii1])/(r1[ii2]-r1[ii1])
-    end
-    ind
-  end
-end
-
-
-function getallsteps(xcoarse,xfine)
-  interpinds = getinterpinds(xcoarse, xfine)
-  resout = UnitRange{Int}[]
-  icur = 1
-  while icur <= length(interpinds)
-    i1 = floor(interpinds[icur])
-    inext = searchsortedlast(interpinds,i1+1)
-    push!(resout,icur:inext)
-    icur = inext+1
-  end
-
-  resin = DiskArrayEngine.MovingWindow(floor(Int,first(interpinds)),1,2,length(resout))
-  interpinds, resin, resout
-end
-
 
 lons = range(-179.875,179.875,length=1440)
 lats = range(89.875,-89.875,length=720)
 ts = t[:]
 
-newlons = range(-180.0,180.0,length=2881)
-newlats = range(90,-90,length=1441)
-ts
-newts = 366.0:1.0:14615
+
+newlons = range(-180.0,180.0,length=4000)
+newlats = range(90,-90,length=2000)
 
 conv = (1=>(lons,newlons),2=>(lats,newlats))
-xcoarse = lats
-xfine = newlats
-interpinds = getinterpinds(xcoarse, xfine)
-resout = UnitRange{Int}[]
-icur = 1
-#while icur <= length(interpinds)
-  i1 = floor(interpinds[icur])
-  inext = searchsortedlast(interpinds,i1+1)
-  push!(resout,icur:inext)
-  icur = inext+1
-#end
 
-resin = DiskArrayEngine.MovingWindow(floor(Int,first(interpinds)),1,2,length(resout))
-interpinds, resin, resout
+a_interp = interpolate_diskarray(a,conv)
+
+a_interp.op
+
+days = Date(1979,1,1) + Day.(Int.(ts))
+m = month.(days)
+_,x2 = rle(m)
+cums = [0;cumsum(x2)]
+stepvectime = [cums[i]+1:cums[i+1] for i in 1:length(x2)]
+
+newia = InputArray(a_interp, windows)
 
 
-getallsteps(lats,newlats)
-
+#xcoarse = lats
+# xfine = newlats
+# interpinds = getinterpinds(xcoarse, xfine)
+# resout = UnitRange{Int}[]
+# icur = 1
+# #while icur <= length(interpinds)
+#   i1 = floor(interpinds[icur])
+#   inext = searchsortedlast(interpinds,i1+1)
+#   push!(resout,icur:inext)
+#   icur = inext+1
+# #end
 
 
 allinfo = [k=>getallsteps(v...) for (k,v) in conv]
-
-function interpolate_block!(xout, data, nodes...; dims,threaded=false)
-  innodes = axes(data)
-  isinterp = ntuple(in(dims),ndims(data))
-  modes = map(isinterp) do m
-    m ? BSpline(Linear()) : NoInterp()
-  end
-  outnodes = innodes
-  for d in dims
-    n,nodes = first(nodes),Base.tail(nodes)
-    outnodes = Base.setindex(outnodes,n,d)
-  end
-  itp = extrapolate(interpolate(data,modes), Flat())
-  fill_nodes!(itp,xout,outnodes)
+inwindows = Base.OneTo.(size(a))
+outwindows = Base.OneTo.(size(a))
+outsize = size(a)
+dims = ()
+addarrays = ()
+sort!(allinfo,by=first)
+for (i,b) in allinfo
+  inwindows = Base.setindex(inwindows,b[2],i)
+  dims = (dims...,i)
+  addarrays = (addarrays...,InputArray(b[1],windows=(b[3],),dimsmap=(i,)))
+  outwindows = Base.setindex(outwindows,b[3],i)
+  outsize = Base.setindex(outsize,length(b[1]),i)
 end
-@noinline function fill_nodes!(itp,xout,outnodes)
-  pa = ProductArray(outnodes)
-  broadcast!(Base.splat(itp),xout,pa)
-end
+ 
+
+outars = (create_outwindows(outsize,windows=outwindows),)
+inars = (InputArray(a,windows=inwindows), addarrays...)
+f = create_userfunction(interpolate_block!,Union{Float32,Missing},is_blockfunction=true,is_mutating=true,dims=dims)
 
 
-f = create_userfunction(interpolate_block!,Union{Float32,Missing},is_blockfunction=true,is_mutating=true,dims=3)
-
-
-rp = ProductArray((1:size(a,1),1:size(a,2),stepin))
-inar1 = InputArray(a,LoopWindows(rp,Val((1,2,3))))
-
-rp2 = ProductArray((stepout,))
-inar2 = InputArray(interpinds,LoopWindows(rp2,Val((3,))))
-
-inars = (inar1,inar2)
-
-rpout = ProductArray((1:size(a,1),1:size(a,2),stepout))
-outwindows = ((lw = LoopWindows(rpout,Val((1,2,3))), chunks = eachchunk(outar).chunks, ismem=true),)
-
-optotal = GMDWop(inars, outwindows, f)
+optotal = GMDWop(inars, outars, f)
 r, = results_as_diskarrays(optotal)
 
+mymap(x) = heatmap(reverse(permutedims(x),dims=1))
 
-rr = r[1000,300,:];
-a[1000,300,:]
+using Plots
+rr = r[:,:,1000]
+
+mymap(rr)
+
+mymap(a[:,:,1000])
 
 
 outar = zcreate(Union{Float32,Missing},size(a)[1:2]...,length(newts),
