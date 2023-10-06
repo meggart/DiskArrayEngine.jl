@@ -64,8 +64,7 @@ end
     else
         if isempty(ntri)
             Threads.@threads for i_thread in CartesianIndices(tri)
-                cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
-                innercode(cI,f,args...)
+                innercode(i_thread,f,args...)
             end
         else
             for i_nonthread in CartesianIndices(ntri)
