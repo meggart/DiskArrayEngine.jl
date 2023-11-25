@@ -23,9 +23,9 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 
 [compat]
-DiskArrays = "0.3"
 Dagger = "0.18"
-Interpolations = "0.14"
+DiskArrays = "0.3"
+Interpolations = "0.14, 0.15"
 Ipopt = "1"
 OffsetArrays = "1"
 OnlineStats = "1"
