@@ -2,23 +2,36 @@ using DiskArrays
 using OnlineStats: OnlineStats
 using Statistics
 export engine, compute, compute!
-
-struct EngineArray{T,N,P} <: AbstractDiskArray{T,N}
+abstract type AbstractEngineArray{T,N} <: AbstractDiskArray{T,N} end
+struct EngineArray{T,N,P} <: AbstractEngineArray{T,N}
     parent::P
     bcdims::Base.RefValue{NTuple{N,Int}}
 end
 EngineArray(p) = EngineArray{eltype(p),ndims(p),typeof(p)}(p,Ref(ntuple(identity,ndims(p))))
+unengine(a::EngineArray) = a.parent
+unengine(a) = a
 engine(p;bcdims=ntuple(identity,ndims(p))) = EngineArray{eltype(p),ndims(p),typeof(p)}(p,Ref(bcdims))
+engine(p::EngineArray;bcdims=ntuple(identity,ndims(p))) = EngineArray{eltype(p),ndims(p),typeof(p)}(p.parent,bcdims)
+function engine(p::AbstractEngineArray;bcdims=nothing)
+    if bcdims === nothing
+        p
+    else
+        bcdims=ntuple(identity,ndims(p))
+        EngineArray{eltype(p),ndims(p),typeof(p)}(p,Ref(bcdims))
+    end
+end
 Base.parent(p::EngineArray) = p.parent
 DiskArrays.readblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.readblock!(a.parent,xout,r...)
 DiskArrays.writeblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.writeblock!(a.parent,xout,r...)
 Base.size(a::EngineArray) = size(a.parent)
 DiskArrays.eachchunk(a::EngineArray) = DiskArrays.eachchunk(a.parent)
+bcdims(a::EngineArray) = a.bcdims[]
+bcdims(p) = ntuple(identity,ndims(p))
 
 function collect_bcdims(A)
     o = Set{Tuple{Int,Int}}()
     for a in A
-        for (i,d) in enumerate(a.bcdims[])
+        for (i,d) in enumerate(bcdims(a))
             push!(o,(size(a,i),d))
         end
     end
@@ -28,11 +41,11 @@ function collect_bcdims(A)
     first.(oc), last.(oc)
 end
 
-function Base.mapreduce(f, op, A::EngineArray...; dims=:, init = nothing, fin = identity)
+function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing, fin = identity)
     s, bcd = collect_bcdims(A)
     nd = maximum(bcd)
     ia = map(A) do ar
-        InputArray(ar.parent,dimsmap = ar.bcdims[])
+        InputArray(unengine,dimsmap = bcdims(ar))
     end
     # tf = Base.promote_op(f,Base.nonmissingtype.(eltype.(A))...)
     # top = Base.promote_op(op,tf,tf)
@@ -73,8 +86,8 @@ for (f,red,i) in (
     (:(Base.sum),:(+),:init_sum),
 )
     eval(quote
-        $f(a::EngineArray;dims=:,skipmissing=false) = $f(identity,a;dims,skipmissing)
-        function $f(ff::Base.Callable,a::EngineArray;dims=:,skipmissing=false)
+        $f(a::AbstractEngineArray;dims=:,skipmissing=false) = $f(identity,a;dims,skipmissing)
+        function $f(ff::Base.Callable,a::AbstractEngineArray;dims=:,skipmissing=false)
             red = skipmissing ? missred($red) : $red
             init = skipmissing ? missing : $i
             mapreduce(ff,red,a;dims,init=$(i)(a))
@@ -84,7 +97,9 @@ for (f,red,i) in (
     end)
 end
 
-function Base.mapslices(f,A::EngineArray...;dims,outchunks=nothing)
+Base.mapslices(f,A::AbstractEngineArray...;dims,outchunks=nothing) = mapslices_engine(f,A;dims,outchunks)
+
+function mapslices_engine(f,A...;dims,outchunks=nothing)
     s, bcd = collect_bcdims(A)
     nd = maximum(bcd)
     ia = ntuple(length(A)) do ii
@@ -92,16 +107,20 @@ function Base.mapslices(f,A::EngineArray...;dims,outchunks=nothing)
         ms = size(ar)
         windows = Base.OneTo.(ms)
         for d in dims
-            idim = findfirst(==(d),ar.bcdims[])
+            idim = findfirst(==(d),bcdims(ar))
             if idim !== nothing
                 windows = Base.setindex(windows,(windows[idim],),idim)
             end
         end
-        InputArray(ar.parent,dimsmap = ar.bcdims[],windows=windows)
+        InputArray(unengine(ar),dimsmap = bcdims(ar),windows=windows)
     end
     inputtypes = map(ia) do inar
-        ndi = sum(i->isa(i,Tuple),inar.lw.windows.members)
-        ndi > 0 ? Array{eltype(inar.a),ndi} : eltype(inar.a)
+        if isempty(inar.lw.windows.members)
+            eltype(inar.a)
+        else
+            ndi = sum(i->isa(i,Tuple),inar.lw.windows.members)
+            ndi > 0 ? Array{eltype(inar.a),ndi} : eltype(inar.a)
+        end
     end
 
     tf = get_infered_types(f,inputtypes)
@@ -123,27 +142,14 @@ end
 
 get_infered_types(f,inputtypes) = Base.promote_op(f,inputtypes...)
 
-Statistics.median(a::EngineArray;dims=()) = mapslices(median,a;dims)
+Statistics.median(a::AbstractEngineArray;dims=()) = mapslices_engine(median,a;dims)
 
-function compute!(ret,a::DiskArrayEngine.GMWOPResult)
-    lr = DiskArrayEngine.optimize_loopranges(a.op,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
-    outars = create_outars(a.op,lr)
-    iout = findfirst(i->Val(i)===a.ires,1:length(outars))
-    if ret !== nothing
-        outars = Base.setindex(outars,ret,iout)
-    end
-    r = DiskArrayEngine.LocalRunner(a.op,lr,outars,threaded=true)
-    run(r)
-    outars[iout]
-end
-function compute(a::DiskArrayEngine.GMWOPResult)
-    compute!(nothing,a)
-end
 
 struct EngineStyle{N} <: Base.Broadcast.AbstractArrayStyle{N} end
 using DiskArrays: ChunkStyle
 using Base.Broadcast: DefaultArrayStyle
 
+Base.BroadcastStyle(::Type{<:AbstractEngineArray{<:Any,N}}) where N = EngineStyle{N}()
 Base.BroadcastStyle(::EngineStyle{N}, ::EngineStyle{M}) where {N,M} = EngineStyle{max(N, M)}()
 function Base.BroadcastStyle(::EngineStyle{N}, ::DefaultArrayStyle{M}) where {N,M}
     return EngineStyle{max(N, M)}()
@@ -160,12 +166,12 @@ end
 
 function Base.copy(bc::Base.Broadcast.Broadcasted{EngineStyle{N}}) where {N}
     bc = Base.Broadcast.flatten(bc)
-    mapslices(bc.f,bc.args...,dims=())
+    mapslices_engine(bc.f,bc.args...,dims=())
 end
 function Base.copyto!(dest::AbstractArray, bc::Base.Broadcast.Broadcasted{EngineStyle{N}}) where {N}
     bcf = Base.Broadcast.flatten(bc)
     size(bcf) == size(dest) || throw(ArgumentError("dest and broadcast expression must have the same size"))
-    r = mapslices(bcf.f,bcf.args...,dims=(),outchunks=DiskArrays.approx_chunksize(DiskArrays.eachchunk(dest)))
+    r = mapslices_engine(bcf.f,bcf.args...,dims=(),outchunks=DiskArrays.approx_chunksize(DiskArrays.eachchunk(dest)))
     compute!(dest,r)
     dest
 end

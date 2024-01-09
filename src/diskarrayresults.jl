@@ -2,7 +2,7 @@ export results_as_diskarrays
 using DiskArrays: AbstractDiskArray, RegularChunks
 using OffsetArrays: OffsetArray
 
-struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
+struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
     op::G
     ires::Val{ISPEC}
     chunksize::CS
@@ -51,3 +51,18 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
     run_loop(runner,loopranges)
     nothing
   end
+
+  function compute!(ret,a::DiskArrayEngine.GMWOPResult)
+    lr = DiskArrayEngine.optimize_loopranges(a.op,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
+    outars = create_outars(a.op,lr)
+    iout = findfirst(i->Val(i)===a.ires,1:length(outars))
+    if ret !== nothing
+        outars = Base.setindex(outars,ret,iout)
+    end
+    r = DiskArrayEngine.LocalRunner(a.op,lr,outars,threaded=true)
+    run(r)
+    outars[iout]
+end
+function compute(a::DiskArrayEngine.GMWOPResult)
+    compute!(nothing,a)
+end

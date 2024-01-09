@@ -70,7 +70,6 @@ end
 
 
 function compute(a::DiskArrayEngine.GMWOPResult)
-
     ret = zeros(eltype(a),size(a))
     lr = DiskArrayEngine.optimize_loopranges(a.op,1e9,tol_low=0.2,tol_high=0.05,max_order=2)
     outars = ntuple(i->Val(i)==a.ires ? ret : nothing,length(a.op.outspecs))

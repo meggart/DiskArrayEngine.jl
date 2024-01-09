@@ -18,24 +18,72 @@ using Distributed
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
 using Dagger
-
+1
 using Test
+using DataStructures: OrderedSet
 
-
-
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
-
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
+g = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/",fill_as_missing=true);
+a = g["air_temperature_2m"];
+t = g["time"]
 
 tvec = timedecode(t[:],t.attrs["units"]);
 groups = yearmonth.(tvec)
 
 r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
+
+r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
+
+r3 = r .- 5
+
+finalres = r2 .+ r3
+
+
+g = DAE.MwopGraph()
+DAE.to_graph!(g,finalres.op);
+map(i->(i.inputids,i.outputids),g.connections)
+DAE.remove_aliases!(g)
+using CairoMakie, GraphMakie
+p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
+map(i->(i.inputids,i.outputids),g.connections)
+
+inops = []
+outops = []
+node_to_merge = 3
+for c in g.connections
+  iin = findfirst(==(node_to_merge),c.outputids)
+  iout = findfirst(==(node_to_merge),c.inputids)
+  !isnothing(iin) && push!(inops,(iin,c))
+  !isnothing(iout) && push!(outops,(iout,c))
+end
+
+#node_dimension_map maps the dimensions from every input op
+
+i,conn = first(inops)
+nodedim = DAE.getsubndims(conn.outwindows[i])
+innodemaps = map(inops) do (i,conn)
+  inds = DAE.getloopinds(conn.outwindows[i])
+  Dict(j=>i for (i,j) in enumerate(inds))
+end
+outnodemaps = map(outops) do (i,conn)
+  inds = DAE.getloopinds(conn.inwindows[i])
+  Dict(j=>i for (i,j) in enumerate(inds))
+end
+dimtomerge = 1
+inwindows = map(inops,innodemaps) do map
+  ii = findfirst(==(dimtomerge),innodemaps)
+  if ii !== nothing
+    
+
+conn.outputids[i]
+
+  
+
 aout = DAE.compute(r)
 
-using Plots
+
+
+
+using CairoMakie
 heatmap(aout)
 
 
@@ -161,18 +209,57 @@ loopsize = (10000,10000)
 
 
 import DiskArrayEngine as DAE
-    using Zarr
+using Zarr, Test
 
-    lr = DAE.ProductArray(([i:i+3 for i in 1:4:28],[i:i for i in 1:3],[i:i+1 for i in 1:2:4]))
-    outspecs = DAE.create_outwindows((168,4),dimsmap=(1,3),windows=([i:(i+5) for i in range(1,step=6,length=28)],1:4))
 
-    outar = zzeros(Float32,168,4,chunks = (48,2))
-    @test DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
-    @test !DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
-    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
-    outar = zzeros(Float32,168,4,chunks = (12,1))
-    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
-    @test_broken DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
-    outar = zzeros(Float32,168,4,chunks = (24,3))
-    @test !DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
-    @test DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
+using FFTW, DataFrames, GLM
+function ft_by_reg(x)
+    len=length(x)
+    time=range(1.0, len)
+    max_norm_freq = len ÷ 2
+    return ft_by_reg(time, x, max_norm_freq)
+ end
+
+ function ft_by_reg(time, x, max_norm_freq)
+    timespan = maximum(time) - minimum(time)
+    normtime = (time .- minimum(time)) ./ timespan
+    function slope(y, time, freq)
+        xsin = sin.(2π*time*freq)
+        xcos = cos.(2π*time*freq)
+        df=DataFrame(;xsin,xcos, y)
+        lm(@formula(y~1+xsin+xcos), df) |> coef
+    end
+    freqs = 1:max_norm_freq
+    coefs=[slope(x, normtime, fr) for fr in freqs]
+
+    return coefs
+
+ end
+
+ # Test it
+
+# Make wave with distinct frequencies...
+len=1000
+
+sincoeffs = rand(100)
+coscoeffs = rand(100)
+freqs=1 ./ rand(1:len, len ÷ 10)
+
+time = range(1.0, len)
+trifun(x, freq, coeffs) = coeffs[1] * sin(2π * x * freq) + coeffs[2] * cos(2π * x * freq)
+constr(x, freqs, sincoeffs, coscoeffs) = mapreduce((f,c)->trifun(x,f,c), +, freqs, zip(sincoeffs, coscoeffs))
+x = [constr(t, freqs, sincoeffs, coscoeffs) for t in time]
+x = cumsum(randn(len))  #... or just time a random walk 
+
+fft_spec=rfft(x) .|> abs
+ my_spec = map(ft_by_reg(x)) do r sqrt(r[2:3] .|> abs2 |> sum) end # sqrt(a²+b²), where a, b are the cos, sin coefs
+
+ xmiss = x |> allowmissing
+ xmiss[rand(1:len, len ÷ 10)] .= missing # 10% missing
+ my_spec_miss = map(ft_by_reg(xmiss)) do r sqrt(r[2:3] .|> abs2 |> sum) end # sqrt(a²+b²), where a, b are the cos, sin coefs
+
+ ok = findall(x->x>0.01, my_spec)
+ scatter(fft_spec[2:end][ok],my_spec[ok])
+ lines(fft_spec[2:end][ok] ./  my_spec[ok])
+ lines(my_spec_miss ./ my_spec)
+ lines(my_spec_miss ./ fft_spec[2:end])
