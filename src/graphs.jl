@@ -10,7 +10,9 @@ describe(c::MwopConnection,_) = string(c.f.f.f)
 struct MwopOutNode
     ismem
     chunks
+    size
 end
+Base.ndims(n::MwopOutNode) = length(n.size)
 describe(_::MwopOutNode,i) = "Output $i" 
 describe(i::InputArray,j) = describe(i.a,j)
 describe(z::ZArray,_) = Zarr.zname(z)
@@ -44,6 +46,20 @@ function Graphs.has_edge(g::MwopGraph,s,d)
             end
         end
     end
+end
+function get_edge(g::MwopGraph,s,d)
+    r = map(g.connections) do c
+        a = map(c.inputids) do src
+            findfirst(c.outputids) do dest
+                src==s && dest==d
+            end
+        end
+        iin = findfirst(!isnothing,a)
+        isnothing(iin) ? nothing : (iin,a[iin])
+    end
+    iconn = findfirst(!isnothing,r)
+    g.connections[iconn],r[iconn]...
+
 end
 Graphs.has_vertex(g::MwopGraph,i) = 0<i<=length(g.nodes)
 Graphs.is_directed(::Type{<:MwopGraph}) = true
@@ -90,7 +106,7 @@ function add_node!(g::MwopGraph, a)
     id
 end
 add_node!(g::MwopGraph, inar::InputArray) = add_node!(g, inar.a)
-add_node!(g::MwopGraph, outspec::NamedTuple) = add_node!(g,MwopOutNode(outspec.ismem, outspec.chunks))
+add_node!(g::MwopGraph, outspec::NamedTuple) = add_node!(g,MwopOutNode(outspec.ismem, outspec.chunks,map(maximum,outspec.lw.windows.members)))
 function add_node!(g::MwopGraph, n::MwopOutNode)
     push!(g.nodes, n)
     length(g.nodes)

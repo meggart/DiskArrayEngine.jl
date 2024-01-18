@@ -18,7 +18,6 @@ using Distributed
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
 using Dagger
-1
 using Test
 using DataStructures: OrderedSet
 
@@ -31,11 +30,12 @@ groups = yearmonth.(tvec)
 
 r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
 
-r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
+r2 = aggregate_diskarray(r,maximum,(2=>nothing,),strategy=:reduce)
 
 r3 = r .- 5
 
 finalres = r2 .+ r3
+
 
 
 g = DAE.MwopGraph()
@@ -44,7 +44,83 @@ map(i->(i.inputids,i.outputids),g.connections)
 DAE.remove_aliases!(g)
 using CairoMakie, GraphMakie
 p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
-map(i->(i.inputids,i.outputids),g.connections)
+
+  
+
+
+import DiskArrayEngine: getloopinds
+using Graphs: SimpleDiGraph, Graphs
+struct DimensionGraph
+  g
+  nodes
+  concomps
+end
+dimnodes = Tuple{Int,Int}[]
+for i in eachindex(g.nodes)
+  for d in 1:ndims(g.nodes[i])
+    push!(dimnodes,(i,d))
+  end
+end
+dimsgraph = SimpleDiGraph(length(dimnodes))
+
+function find_matches(t1,t2)
+  matches = Pair{Int,Int}[]
+  cands = union(t1,t2)
+  for c in cands
+    i1 = findfirst(==(c),t1)
+    i2 = findfirst(==(c),t2)
+    !isnothing(i1) && !isnothing(i2) && push!(matches,i1=>i2)
+  end
+  matches
+end
+for conn in g.connections
+  for (i_in,inid) in enumerate(conn.inputids)
+    li_in = getloopinds(conn.inwindows[i_in])
+    for (i_out,outid) in enumerate(conn.outputids)
+      li_out = getloopinds(conn.outwindows[i_out])
+      matches = find_matches(li_in, li_out)
+      for m in matches 
+        innode = findfirst(==((inid,first(m))),dimnodes)
+        outnode = findfirst(==((outid,last(m))),dimnodes)
+        Graphs.add_edge!(dimsgraph,Graphs.Edge(innode,outnode))
+      end
+    end
+  end
+end
+
+dimcons = Graphs.connected_components(dimsgraph)
+graphplot(dimsgraph,ilabels = string.(dimnodes))
+
+Graphs.inneighbors.(Ref(dimsgraph),dimcons[1])
+Graphs.outneighbors.(Ref(dimsgraph),dimcons[1])
+
+dimnodes
+
+#Select a dim operation to merge
+mynode,mydim = dimnodes[5]
+inputnodes = Graphs.inneighbors(g,mynode)
+outputnodes = Graphs.outneighbors(g,mynode)
+innode = inputnodes[1]
+inwindows = map(inputnodes) do innode
+  inedge,iinput,ioutput = DAE.get_edge(g,innode,mynode)
+  inwindow = inedge.outwindows[ioutput].windows.members[mydim]
+end
+outwindows = map(outputnodes) do outnode
+  outedge,iinput,ioutput = DAE.get_edge(g,mynode,outnode)
+  outwindow = outedge.inwindows[iinput].windows.members[mydim]
+end
+
+
+function mergewindow(incoming,outgoing)
+  
+end
+
+
+allequal(outwindows)
+outwindows[1] == outwindows[2]
+inedges[1]
+
+dimnodes[6]
 
 inops = []
 outops = []
@@ -72,6 +148,9 @@ dimtomerge = 1
 inwindows = map(inops,innodemaps) do map
   ii = findfirst(==(dimtomerge),innodemaps)
   if ii !== nothing
+
+  end
+end
     
 
 conn.outputids[i]

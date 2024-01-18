@@ -132,7 +132,11 @@ function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,r
             @assert m1==m2
         end
         @assert ntot1 == ntot2
-        Ref(n1[]+n2[]),ntot1,ArrayBuffer(red.(b1.a,b2.a),b1.offsets,b1.lw)
+        merged = red.(b1.a,b2.a)
+        if !isa(merged, AbstractArray)
+            merged = fill(merged)
+        end
+        Ref(n1[]+n2[]),ntot1,ArrayBuffer(merged,b1.offsets,b1.lw)
     end
     OutputAggregator(o3,o1.bufsize,o1.repeats)
 end
@@ -150,6 +154,7 @@ function flush_all_outbuffers(outbuffers,fin,outars,piddir)
     @assert length(outbuffers) == length(outars) == length(fin)
     for (coll,outar,f) in zip(outbuffers,outars,fin)
         allkeys = collect(keys(coll.buffers))
+        @debug "Putting keys $allkeys"
         for k in allkeys
             put_buffer(k,f, last(coll.buffers[k]), coll, outar, piddir)
         end
@@ -204,11 +209,18 @@ function mustwrite(inds,bufdict)
     end
 end
 
+extract_channel(x) = x
+put_channel(c,x) = nothing
+extract_channel(x::RemoteChannel) = first(x)
+put_channel(c::RemoteChannel,x) = put!(c,x)
+
 "Checks if output buffers have accumulated to the end and exports to output array"
-function put_buffer(r, fin, bufnow, bufferdict, outar, piddir)
+function put_buffer(r, fin, bufnow, bufferdict, outarc, piddir)
+  @debug "Putting buffers"
   bufinds = get_bufferindices(r,bufnow)
   if mustwrite(bufinds,bufferdict)
     offsets = offset_from_range(bufinds)
+    outar = extract_channel(outarc)
     i1 = first.(axes(outar))
     i2 = last.(axes(outar))
     inds = bufinds.indranges
@@ -223,9 +235,12 @@ function put_buffer(r, fin, bufnow, bufferdict, outar, piddir)
         end
     else
         @debug "$(myid()) Writing data without piddir to $inds2"
+        @debug "$outar"
+        @debug "$(bufnow.a) $r2"
         broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
     end
     delete!(bufferdict.buffers,bufinds)
+    put_channel(outarc,outar)
     true
   else
     false

@@ -52,17 +52,17 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
     nothing
   end
 
-  function compute!(ret,a::DiskArrayEngine.GMWOPResult)
+  function compute!(ret,a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,kwargs...)
     lr = DiskArrayEngine.optimize_loopranges(a.op,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
     outars = create_outars(a.op,lr)
     iout = findfirst(i->Val(i)===a.ires,1:length(outars))
     if ret !== nothing
         outars = Base.setindex(outars,ret,iout)
     end
-    r = DiskArrayEngine.LocalRunner(a.op,lr,outars,threaded=true)
+    r = runner(a.op,lr,outars;threaded,kwargs...)
     run(r)
     outars[iout]
 end
-function compute(a::DiskArrayEngine.GMWOPResult)
-    compute!(nothing,a)
+function compute(a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,kwargs...)
+    compute!(nothing,a;runner,threaded)
 end

@@ -52,7 +52,7 @@ function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
 end
 
 function run_block_single(loopRanges,f::UserOp,args...)
-    Threads.@threads for cI in CartesianIndices(loopRanges)
+    for cI in CartesianIndices(loopRanges)
        innercode(cI,f,args...)
     end
 end

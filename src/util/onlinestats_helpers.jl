@@ -5,7 +5,7 @@ function fit_online!(xout,x,f=identity)
     ismissing(fx) || OnlineStats.fit!(xout[],fx)
 end
 fin_online(x) = OnlineStats.nobs(x) == 0 ? missing : OnlineStats.value(x);
-disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt,preproc=identity) = create_userfunction(
+disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt=typeof(OnlineStats.value(s())),preproc=identity) = create_userfunction(
     fit_online!,
     rt,
     is_mutating = true,

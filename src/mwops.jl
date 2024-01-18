@@ -101,7 +101,7 @@ function GMDWop(inars, outspecs, f)
     GMDWop(inars,outspecs, f, s)
 end
 
-function create_outars(op,plan)
+function create_outars(op,plan;par_only=false)
   map(plan.output_chunkspecs,op.f.outtype) do outspec,rettype
     chunks = DiskArrays.GridChunks(output_chunks(outspec,plan.lr))
     chunksize = DiskArrays.approx_chunksize(chunks)
@@ -110,7 +110,13 @@ function create_outars(op,plan)
     if sizeof(rettype)*prod(outsize) > 1e8
       zcreate(retnmtype,outsize...,path=tempname(),fill_value=typemin(retnmtype),chunks=chunksize,fill_as_missing=Missing <: rettype)
     else
-      zeros(rettype,outsize)
+      if par_only
+        a = Array{rettype,length(outsize)}(undef,outsize...)
+        c = RemoteChannel()
+        put!(c,a)
+      else
+        Array{rettype,length(outsize)}(undef,outsize...)
+      end
     end
   end
 end
