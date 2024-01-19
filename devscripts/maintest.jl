@@ -30,6 +30,8 @@ groups = yearmonth.(tvec)
 
 r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
 
+compute(r)
+
 r2 = aggregate_diskarray(r,maximum,(2=>nothing,),strategy=:reduce)
 
 r3 = r .- 5

@@ -13,6 +13,7 @@ disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt=typeof(OnlineStats.value(s(
     init = s, 
     finalize=fin_online,
     buftype = typeof(s()),
+    allow_threads=false,
     args = (preproc,)
 )
 

@@ -18,4 +18,5 @@ include("util/interpolate.jl")
 include("util/onlinestats_helpers.jl")
 include("util/rechunk.jl")
 include("util/aggregate.jl")
+include("util/indexdicts.jl")
 end

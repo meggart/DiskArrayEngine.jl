@@ -39,10 +39,11 @@ function innercode(
         #Finally call the function
         apply_function(f,myoutwork, myinwork)
     end
+    nothing
 end
 
 function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-    if !threaded
+    if !threaded || !op.f.allow_threads
         run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
     else
         lspl = get_loopsplitter(op)
@@ -51,9 +52,9 @@ function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
     end
 end
 
-function run_block_single(loopRanges,f::UserOp,args...)
+@noinline function run_block_single(loopRanges,f::UserOp,inbuffers, outbuffers)
     for cI in CartesianIndices(loopRanges)
-       innercode(cI,f,args...)
+       innercode(cI,f,inbuffers, outbuffers)
     end
 end
 

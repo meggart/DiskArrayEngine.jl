@@ -63,9 +63,7 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
             true
         end
     end
-
-    @debug myid(), " Finished spawning jobs"
-    all(fetch.(r)) || error("Error during chunk processing")
+    all(fetch.(r)) || error("Some workers errored")
     @debug myid(), " Fetched everything"
     if (groupspecs !== nothing) && any(i->in(:reducedim,i.reasons),groupspecs)
         @debug "Merging buffers"
