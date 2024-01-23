@@ -65,5 +65,5 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
     fetch(outars[iout])
 end
 function compute(a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,kwargs...)
-    compute!(nothing,a;runner,threaded)
+    compute!(nothing,a;runner,threaded,kwargs...)
 end
