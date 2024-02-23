@@ -141,6 +141,7 @@ function Base.run(runner::LocalRunner)
     groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
     run_group(sch,nothing)
+    return runner.outars
 end
 
 

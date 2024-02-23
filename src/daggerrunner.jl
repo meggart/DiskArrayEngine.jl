@@ -11,7 +11,7 @@ end
 make_outbuffer_shard(op,runnerloopranges,workerthreads) = Dagger.shard(per_thread=workerthreads) do 
     generate_outbuffers(op.outspecs,op.f,runnerloopranges)
 end
-function DaggerRunner(op,exec_plan,outars;workerthreads=false,threaded=true)
+function DaggerRunner(op,exec_plan,outars=create_outars(op,exec_plan;par_only=true);workerthreads=false,threaded=true)
     inars = op.inars
     loopranges = plan_to_loopranges(exec_plan)
     inbuffers = Dagger.shard(per_thread=workerthreads) do
@@ -28,9 +28,9 @@ end
 buffer_mergefunc(red,::Type{<:Union{Dagger.Chunk,Dagger.Thunk, Dagger.EagerThunk}}) = (buf1,buf2) -> begin
     @debug "Creating Dagger merge function"
     @debug "Fetching x"
-    fx = fetch(x)
+    fx = fetch(buf1)
     @debug "Fetching y"
-    fy = fetch(y)
+    fy = fetch(buf2)
     @debug "Calling function"
     merge_outbuffer_collection.(fx,fy,(red,))
 end
@@ -59,14 +59,11 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
             outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
             run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
             @debug myid(), "Finished running block ", inow
-
             put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
             true
         end
     end
-
-    @debug myid(), " Finished spawning jobs"
-    all(fetch.(r)) || error("Error during chunk processing")
+    all(fetch.(r)) || error("Some workers errored")
     @debug myid(), " Fetched everything"
     if (groupspecs !== nothing) && any(i->in(:reducedim,i.reasons),groupspecs)
         @debug "Merging buffers"
@@ -97,6 +94,10 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
                 end
             end
             fetch(r)
+        else
+            @debug "Outbuffers are empty"
+            return fetch(unflushed_buffers)
+            @debug "Fetched unflushed buffers"
         end
     end
     GC.gc()
@@ -115,7 +116,7 @@ function Base.run(runner::DaggerRunner)
         @debug "Calling first run_group"
         run_group(sch,nothing)
     end
-    true
+    runner.outars
 end
 
 function schedule(sch::DiskEngineScheduler,r::DaggerRunner,loopdims,loopsub,groupspecs)

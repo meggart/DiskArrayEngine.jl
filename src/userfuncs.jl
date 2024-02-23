@@ -8,6 +8,7 @@ struct UserOp{F,R,I,FILT,FIN,B,T,A,KW}
     finalize::FIN
     buftype::B
     outtype::T
+    allow_threads::Bool
     args::A
     kwargs::KW
 end
@@ -44,6 +45,7 @@ function create_userfunction(
         filters = NoFilter(),
         finalize = identity,
         buftype = outtypes,
+        allow_threads=true,
         args::Tuple = (),
         kwargs::NamedTuple = (;),
         dims = (),
@@ -56,7 +58,7 @@ function create_userfunction(
     !isa(filters,Tuple) && (filters = (filters,))
     m = is_mutating ? Mutating() : NonMutating()
     uf = is_blockfunction ? BlockFunction(f,m,Val(dims)) : ElementFunction(f,m)
-    UserOp(uf,red,init,filters,finalize,buftype,outtypes,args,kwargs)
+    UserOp(uf,red,init,filters,finalize,buftype,outtypes,allow_threads,args,kwargs)
 end 
 
 

@@ -39,10 +39,11 @@ function innercode(
         #Finally call the function
         apply_function(f,myoutwork, myinwork)
     end
+    nothing
 end
 
 function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-    if !threaded
+    if !threaded || !op.f.allow_threads
         run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
     else
         lspl = get_loopsplitter(op)
@@ -51,18 +52,28 @@ function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
     end
 end
 
-function run_block_single(loopRanges,f::UserOp,args...)
-    Threads.@threads for cI in CartesianIndices(loopRanges)
-       innercode(cI,f,args...)
+@noinline function run_block_single(loopRanges,f::UserOp,inbuffers, outbuffers)
+    for cI in CartesianIndices(loopRanges)
+       innercode(cI,f,inbuffers, outbuffers)
     end
 end
 
-@noinline function run_block_threaded(loopRanges,lspl,f::UserOp,args...)
+@noinline function run_block_threaded(loopRanges,lspl,f::UserOp,inbuffers,outbuffers)
     tri, ntri = split_loopranges_threads(lspl,loopRanges)
-    for i_nonthread in CartesianIndices(ntri)
-        Threads.@threads for i_thread in CartesianIndices(tri)
-            cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
-            innercode(cI,f,args...)
+    if isempty(tri) 
+        run_block_single(loopRanges,f,inbuffers,outbuffers)
+    else
+        if isempty(ntri)
+            Threads.@threads for i_thread in CartesianIndices(tri)
+                innercode(i_thread,f,inbuffers,outbuffers)
+            end
+        else
+            for i_nonthread in CartesianIndices(ntri)
+                Threads.@threads for i_thread in CartesianIndices(tri)
+                    cI = merge_loopranges_threads(i_thread,i_nonthread,lspl)
+                    innercode(cI,f,inbuffers,outbuffers)
+                end
+            end
         end
     end
 end
@@ -110,7 +121,7 @@ struct LocalRunner
     outbuffers
     progress
 end
-function LocalRunner(op,exec_plan,outars;threaded=true,showprogress=true)
+function LocalRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
     loopranges = plan_to_loopranges(exec_plan)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)

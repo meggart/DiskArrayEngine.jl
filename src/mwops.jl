@@ -1,5 +1,6 @@
 using DiskArrays: DiskArrays, ChunkType, GridChunks, AbstractDiskArray
-export InputArray, create_outwindows, GMDWop
+using Zarr
+export InputArray, create_outwindows, GMDWop, create_outars
 
 internal_size(p) = last(last(p))-first(first(p))+1
 function steps_per_chunk(p,cs::ChunkType)
@@ -26,6 +27,7 @@ struct InputArray{A,LW<:LoopWindows}
     a::A
     lw::LW
 end
+InputArray(a::Number;kwargs...) = InputArray(fill(a);kwargs...)
 function InputArray(a::AbstractArray;dimsmap = ntuple(identity,ndims(a)),windows = Base.OneTo.(size(a)))
   length(dimsmap) == ndims(a) || throw(ArgumentError("number is dimensions in loop dimension map not equal to ndims(a)"))
   length(windows) == ndims(a) || throw(ArgumentError("number of supplied loop windwos not equal to ndims(a)"))
@@ -42,7 +44,7 @@ getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
 @inline getloopinds(c) = getloopinds(c.lw)
 @inline getsubndims(c) = getsubndims(c.lw)
 
-function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base.OneTo.(s), chunks = ntuple(_->nothing,length(s)),ismem=false)
+function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base.OneTo.(s), chunks = map(_->nothing,s),ismem=false)
   outrp = ProductArray(to_window.(windows))
   (;lw=LoopWindows(outrp,Val((dimsmap...,))),chunks,ismem)
 end
@@ -97,5 +99,25 @@ end
 function GMDWop(inars, outspecs, f)
     s = getwindowsize(inars, outspecs)
     GMDWop(inars,outspecs, f, s)
+end
+
+function create_outars(op,plan;par_only=false)
+  map(plan.output_chunkspecs,op.f.outtype) do outspec,rettype
+    chunks = DiskArrays.GridChunks(output_chunks(outspec,plan.lr))
+    chunksize = DiskArrays.approx_chunksize(chunks)
+    outsize = last.(last.(chunks.chunks))
+    retnmtype = Base.nonmissingtype(rettype)
+    if sizeof(rettype)*prod(outsize) > 1e8
+      zcreate(retnmtype,outsize...,path=tempname(),fill_value=typemin(retnmtype),chunks=chunksize,fill_as_missing=Missing <: rettype)
+    else
+      if par_only
+        a = Array{rettype,length(outsize)}(undef,outsize...)
+        c = RemoteChannel()
+        put!(c,a)
+      else
+        Array{rettype,length(outsize)}(undef,outsize...)
+      end
+    end
+  end
 end
 

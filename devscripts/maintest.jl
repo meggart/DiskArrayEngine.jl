@@ -8,7 +8,7 @@ using Zarr, DiskArrays, OffsetArrays
 #  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
 #  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
 #  merge_outbuffer_collection, DistributedRunner
-using StatsBase: rle
+using StatsBase: rle,mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
@@ -18,45 +18,160 @@ using Distributed
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
 using Dagger
-
 using Test
+using DataStructures: OrderedSet
 
-
-
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/time", fill_as_missing=true);
-
-a = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/air_temperature_2m/", fill_as_missing=true);
-t = zopen("/home/fgans/data/esdc-8d-0.25deg-1x720x1440-3.0.2.zarr/time", fill_as_missing=true);
+g = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/",fill_as_missing=true);
+a = g["air_temperature_2m"];
+t = g["time"]
 
 tvec = timedecode(t[:],t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-agg1 = DAE.DirectAggregator(DAE.create_userfunction(mean,Union{Float64,Missing}))
-agg2 = DAE.ReduceAggregator(DAE.disk_onlinestat(mean))
-dimspec = (3=>nothing,)
-op1 = DAE.gmwop_for_aggregator(agg1,dimspec,a)
-p1 = DAE.optimize_loopranges(op1,5e8)
-op2 = DAE.gmwop_for_aggregator(agg2,dimspec,a)
-p2 = DAE.optimize_loopranges(op2,5e8)
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
 
-p1.cost_min, p2.cost_min
+compute(r)
 
-using Zarr
-cs1 = length.(first.(p1.lr.members[1:2]))
-aout1 = zcreate(Float64,size(a)[1:2]...,path=tempname(),fill_value=-1.0e32,chunks=cs1,fill_as_missing=true)
-r=DAE.LocalRunner(op1,p1,(aout1,))
-run(r)
+r2 = aggregate_diskarray(r,maximum,(2=>nothing,),strategy=:reduce)
+
+r3 = r .- 5
+
+finalres = r2 .+ r3
 
 
-p2.lr
-cs2 = length.(first.(p2.lr.members[1:2]))
-aout2 = zcreate(Float64,size(a)[1:2]...,path=tempname(),fill_value=-1.0e32,chunks=cs2,fill_as_missing=true)
-r=DAE.LocalRunner(op2,p2,(aout2,))
-run(r)
+
+g = DAE.MwopGraph()
+DAE.to_graph!(g,finalres.op);
+map(i->(i.inputids,i.outputids),g.connections)
+DAE.remove_aliases!(g)
+using CairoMakie, GraphMakie
+p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
+
+  
+
+
+import DiskArrayEngine: getloopinds
+using Graphs: SimpleDiGraph, Graphs
+struct DimensionGraph
+  g
+  nodes
+  concomps
+end
+dimnodes = Tuple{Int,Int}[]
+for i in eachindex(g.nodes)
+  for d in 1:ndims(g.nodes[i])
+    push!(dimnodes,(i,d))
+  end
+end
+dimsgraph = SimpleDiGraph(length(dimnodes))
+
+function find_matches(t1,t2)
+  matches = Pair{Int,Int}[]
+  cands = union(t1,t2)
+  for c in cands
+    i1 = findfirst(==(c),t1)
+    i2 = findfirst(==(c),t2)
+    !isnothing(i1) && !isnothing(i2) && push!(matches,i1=>i2)
+  end
+  matches
+end
+for conn in g.connections
+  for (i_in,inid) in enumerate(conn.inputids)
+    li_in = getloopinds(conn.inwindows[i_in])
+    for (i_out,outid) in enumerate(conn.outputids)
+      li_out = getloopinds(conn.outwindows[i_out])
+      matches = find_matches(li_in, li_out)
+      for m in matches 
+        innode = findfirst(==((inid,first(m))),dimnodes)
+        outnode = findfirst(==((outid,last(m))),dimnodes)
+        Graphs.add_edge!(dimsgraph,Graphs.Edge(innode,outnode))
+      end
+    end
+  end
+end
+
+dimcons = Graphs.connected_components(dimsgraph)
+graphplot(dimsgraph,ilabels = string.(dimnodes))
+
+Graphs.inneighbors.(Ref(dimsgraph),dimcons[1])
+Graphs.outneighbors.(Ref(dimsgraph),dimcons[1])
+
+dimnodes
+
+#Select a dim operation to merge
+mynode,mydim = dimnodes[5]
+inputnodes = Graphs.inneighbors(g,mynode)
+outputnodes = Graphs.outneighbors(g,mynode)
+innode = inputnodes[1]
+inwindows = map(inputnodes) do innode
+  inedge,iinput,ioutput = DAE.get_edge(g,innode,mynode)
+  inwindow = inedge.outwindows[ioutput].windows.members[mydim]
+end
+outwindows = map(outputnodes) do outnode
+  outedge,iinput,ioutput = DAE.get_edge(g,mynode,outnode)
+  outwindow = outedge.inwindows[iinput].windows.members[mydim]
+end
+
+
+function mergewindow(incoming,outgoing)
+  
+end
+
+
+allequal(outwindows)
+outwindows[1] == outwindows[2]
+inedges[1]
+
+dimnodes[6]
+
+inops = []
+outops = []
+node_to_merge = 3
+for c in g.connections
+  iin = findfirst(==(node_to_merge),c.outputids)
+  iout = findfirst(==(node_to_merge),c.inputids)
+  !isnothing(iin) && push!(inops,(iin,c))
+  !isnothing(iout) && push!(outops,(iout,c))
+end
+
+#node_dimension_map maps the dimensions from every input op
+
+i,conn = first(inops)
+nodedim = DAE.getsubndims(conn.outwindows[i])
+innodemaps = map(inops) do (i,conn)
+  inds = DAE.getloopinds(conn.outwindows[i])
+  Dict(j=>i for (i,j) in enumerate(inds))
+end
+outnodemaps = map(outops) do (i,conn)
+  inds = DAE.getloopinds(conn.inwindows[i])
+  Dict(j=>i for (i,j) in enumerate(inds))
+end
+dimtomerge = 1
+inwindows = map(inops,innodemaps) do map
+  ii = findfirst(==(dimtomerge),innodemaps)
+  if ii !== nothing
+
+  end
+end
+    
+
+conn.outputids[i]
+
+  
+
+aout = DAE.compute(r)
+
+
+
+
+using CairoMakie
+heatmap(aout)
+
 
 using Plots
-heatmap(aout[:,:])
+heatmap(aout1[:,:])
+
+heatmap(aout2[:,:])
 
 aout2 = zcreate(Float64,90,480,path=tempname(),fill_value=-1.0e32,chunks=cs,fill_as_missing=true)
 r=DAE.LocalRunner(op,p,(aout2,))
@@ -116,10 +231,10 @@ function extract_slice(a,cs)
   r
 end
 csvec = [10:90;95:5:200]
-
+using Plots
 readtime = [@elapsed extract_slice(a,cs) for cs in csvec]
 p = plot(csvec,readtime,log="x")
-ticvec = [18,20,30,36,45,60,90,120,135,150,180]
+ticvec = [15,18,20,30,36,45,60,90,120,135,150,180]
 xticks!(p,ticvec)
 vline!(p,ticvec)
 
@@ -173,3 +288,59 @@ window = [1000,1000]
 loopsize = (10000,10000)
 
 
+
+import DiskArrayEngine as DAE
+using Zarr, Test
+
+
+using FFTW, DataFrames, GLM
+function ft_by_reg(x)
+    len=length(x)
+    time=range(1.0, len)
+    max_norm_freq = len ÷ 2
+    return ft_by_reg(time, x, max_norm_freq)
+ end
+
+ function ft_by_reg(time, x, max_norm_freq)
+    timespan = maximum(time) - minimum(time)
+    normtime = (time .- minimum(time)) ./ timespan
+    function slope(y, time, freq)
+        xsin = sin.(2π*time*freq)
+        xcos = cos.(2π*time*freq)
+        df=DataFrame(;xsin,xcos, y)
+        lm(@formula(y~1+xsin+xcos), df) |> coef
+    end
+    freqs = 1:max_norm_freq
+    coefs=[slope(x, normtime, fr) for fr in freqs]
+
+    return coefs
+
+ end
+
+ # Test it
+
+# Make wave with distinct frequencies...
+len=1000
+
+sincoeffs = rand(100)
+coscoeffs = rand(100)
+freqs=1 ./ rand(1:len, len ÷ 10)
+
+time = range(1.0, len)
+trifun(x, freq, coeffs) = coeffs[1] * sin(2π * x * freq) + coeffs[2] * cos(2π * x * freq)
+constr(x, freqs, sincoeffs, coscoeffs) = mapreduce((f,c)->trifun(x,f,c), +, freqs, zip(sincoeffs, coscoeffs))
+x = [constr(t, freqs, sincoeffs, coscoeffs) for t in time]
+x = cumsum(randn(len))  #... or just time a random walk 
+
+fft_spec=rfft(x) .|> abs
+ my_spec = map(ft_by_reg(x)) do r sqrt(r[2:3] .|> abs2 |> sum) end # sqrt(a²+b²), where a, b are the cos, sin coefs
+
+ xmiss = x |> allowmissing
+ xmiss[rand(1:len, len ÷ 10)] .= missing # 10% missing
+ my_spec_miss = map(ft_by_reg(xmiss)) do r sqrt(r[2:3] .|> abs2 |> sum) end # sqrt(a²+b²), where a, b are the cos, sin coefs
+
+ ok = findall(x->x>0.01, my_spec)
+ scatter(fft_spec[2:end][ok],my_spec[ok])
+ lines(fft_spec[2:end][ok] ./  my_spec[ok])
+ lines(my_spec_miss ./ my_spec)
+ lines(my_spec_miss ./ fft_spec[2:end])
