@@ -15,7 +15,8 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
   Base.size(r::GMWOPResult) = maximum.(maximum,getoutspec(r).lw.windows.members)
   
   function results_as_diskarrays(o::GMDWop;cs=nothing,max_cache=1e9)
-    map(enumerate(o.outspecs)) do (i,outspec)
+    ntuple(length(o.outspecs)) do i
+      outspec = o.outspecs[i]
       T = o.f.outtype[i]
       N = ndims(outspec.lw.windows)
       cs = cs === nothing ? DiskArrays.Unchunked() : cs

@@ -25,7 +25,7 @@ Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 
 [compat]
 Dagger = "0.18"
-DiskArrays = "0.3"
+DiskArrays = "0.3, 0.4"
 Graphs = "1"
 Interpolations = "0.14, 0.15"
 Ipopt = "1"
