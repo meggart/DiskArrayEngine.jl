@@ -17,7 +17,6 @@ using Distributed
 #global_logger(SimpleLogger(stdout,Logging.Debug))
 #global_logger(SimpleLogger(stdout))
 using LoggingExtras
-using Dagger
 using Test
 using DataStructures: OrderedSet
 
@@ -28,89 +27,94 @@ t = g["time"]
 tvec = timedecode(t[:],t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups))
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups),strategy=:direct)
 
-compute(r)
+#compute(r)
 
-r2 = aggregate_diskarray(r,maximum,(2=>nothing,),strategy=:reduce)
+r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
 
 r3 = r .- 5
 
-finalres = r2 .+ r3
+#finalres = r2 .+ r3
 
 
 
 g = DAE.MwopGraph()
-DAE.to_graph!(g,finalres.op);
-map(i->(i.inputids,i.outputids),g.connections)
+DAE.to_graph!(g,r3.op);
 DAE.remove_aliases!(g)
 using CairoMakie, GraphMakie
 p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
 
-  
 
 
 import DiskArrayEngine: getloopinds
-using Graphs: SimpleDiGraph, Graphs
-struct DimensionGraph
-  g
-  nodes
-  concomps
-end
-dimnodes = Tuple{Int,Int}[]
-for i in eachindex(g.nodes)
-  for d in 1:ndims(g.nodes[i])
-    push!(dimnodes,(i,d))
-  end
-end
-dimsgraph = SimpleDiGraph(length(dimnodes))
 
-function find_matches(t1,t2)
-  matches = Pair{Int,Int}[]
-  cands = union(t1,t2)
-  for c in cands
-    i1 = findfirst(==(c),t1)
-    i2 = findfirst(==(c),t2)
-    !isnothing(i1) && !isnothing(i2) && push!(matches,i1=>i2)
+
+dg = DAE.DimensionGraph(g)
+
+graphplot(dg.dimgraph,ilabels = string.(dg.nodes))
+
+
+allmerges = Dict(Iterators.flatten(map(dg.concomps) do comps
+  map(comps) do inode
+    n = dg.nodes[inode]
+    n=>DAE.possible_breaks(dg,inode)
   end
-  matches
-end
-for conn in g.connections
-  for (i_in,inid) in enumerate(conn.inputids)
-    li_in = getloopinds(conn.inwindows[i_in])
-    for (i_out,outid) in enumerate(conn.outputids)
-      li_out = getloopinds(conn.outwindows[i_out])
-      matches = find_matches(li_in, li_out)
-      for m in matches 
-        innode = findfirst(==((inid,first(m))),dimnodes)
-        outnode = findfirst(==((outid,last(m))),dimnodes)
-        Graphs.add_edge!(dimsgraph,Graphs.Edge(innode,outnode))
-      end
-    end
+end))
+
+nodemergestrategies = map(enumerate(dg.nodegraph.nodes)) do (inode,mainnode)
+  map(1:ndims(mainnode)) do idim
+    allmerges[(inode,idim)]
   end
 end
 
-dimcons = Graphs.connected_components(dimsgraph)
-graphplot(dimsgraph,ilabels = string.(dimnodes))
 
-Graphs.inneighbors.(Ref(dimsgraph),dimcons[1])
-Graphs.outneighbors.(Ref(dimsgraph),dimcons[1])
 
-dimnodes
-
-#Select a dim operation to merge
-mynode,mydim = dimnodes[5]
-inputnodes = Graphs.inneighbors(g,mynode)
-outputnodes = Graphs.outneighbors(g,mynode)
-innode = inputnodes[1]
-inwindows = map(inputnodes) do innode
-  inedge,iinput,ioutput = DAE.get_edge(g,innode,mynode)
-  inwindow = inedge.outwindows[ioutput].windows.members[mydim]
+using Graphs
+i_eliminate = findfirst(nodemergestrategies) do strat
+  !isempty(strat) && !all(isnothing,strat) && all(i->isa(i,DAE.DirectMerge),strat)
 end
-outwindows = map(outputnodes) do outnode
-  outedge,iinput,ioutput = DAE.get_edge(g,mynode,outnode)
-  outwindow = outedge.inwindows[iinput].windows.members[mydim]
-end
+inconids = DAE.inconnections(dg.nodegraph,i_eliminate)
+outconids = DAE.outconnections(dg.nodegraph,i_eliminate)
+inconns = dg.nodegraph.connections[inconids]
+outconns = dg.nodegraph.connections[outconids]
+
+inconn = only(inconns)
+outconn = only(outconns)
+
+newop = DAE.merge_operations(inconn,outconn,i_eliminate)
+newinputids = [inconn.inputids;filter(!=(i_eliminate),outconn.inputids)]
+inwindows2 = deepcopy(outconn.inwindows)
+i_keep = findall(!=(i_eliminate),outconn.inputids)
+newinwindows = (inconn.inwindows...,inwindows2[i_keep]...)
+newconn = DAE.MwopConnection(newinputids,outconn.outputids,newop,newinwindows,outconn.outwindows)
+
+
+
+deleteat!(dg.nodegraph.connections,[inconids;outconids])
+push!(dg.nodegraph.connections,newconn)
+
+remaining_conn = only(dg.nodegraph.connections)
+
+op = remaining_conn.f
+inputs = dg.nodegraph.nodes[remaining_conn.inputids]
+
+
+
+p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
+
+
+f1(a,x) = a*x
+f2(x,y) = x+y
+fcomb = PartialFunctionChain(f1,f2,Val((1,3)),Val(((true,1),(false,2))))
+
+
+
+
+#First decide if merge of functions can be done ny element or has to be done
+# by block. Then define possible block boundaries and if not possible resort to
+# the whole dimension
+
 
 
 function mergewindow(incoming,outgoing)

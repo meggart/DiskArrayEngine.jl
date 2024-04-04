@@ -11,8 +11,10 @@ struct MwopOutNode
     ismem
     chunks
     size
+    eltype
 end
 Base.ndims(n::MwopOutNode) = length(n.size)
+Base.size(n::MwopOutNode) = n.size
 describe(_::MwopOutNode,i) = "Output $i" 
 describe(i::InputArray,j) = describe(i.a,j)
 describe(z::ZArray,_) = Zarr.zname(z)
@@ -106,7 +108,7 @@ function add_node!(g::MwopGraph, a)
     id
 end
 add_node!(g::MwopGraph, inar::InputArray) = add_node!(g, inar.a)
-add_node!(g::MwopGraph, outspec::NamedTuple) = add_node!(g,MwopOutNode(outspec.ismem, outspec.chunks,map(maximum,outspec.lw.windows.members)))
+add_node!(g::MwopGraph, outspec::NamedTuple,et) = add_node!(g,MwopOutNode(outspec.ismem, outspec.chunks,map(maximum,outspec.lw.windows.members),et))
 function add_node!(g::MwopGraph, n::MwopOutNode)
     push!(g.nodes, n)
     length(g.nodes)
@@ -165,11 +167,11 @@ end
 
 
 function to_graph!(g, op::GMDWop, aliases=Dict())
-    output_ids = map(enumerate(op.outspecs)) do (iout,outspec)
+    output_ids = map(enumerate(op.outspecs),op.f.outtype) do (iout,outspec),et
         if iout in keys(aliases)
             aliases[iout]
         else
-            add_node!(g, outspec)
+            add_node!(g, outspec, et)
         end
     end
     input_ids = map(op.inars) do inar
@@ -177,7 +179,7 @@ function to_graph!(g, op::GMDWop, aliases=Dict())
             r = inar.a
             i = getioutspec(r)
             outspec = getoutspec(r)
-            id = add_node!(g,outspec)
+            id = add_node!(g,outspec,eltype(inar.a))
             to_graph!(g,r.op,Dict(i=>id))
             id
         else
@@ -191,3 +193,105 @@ function to_graph!(g, op::GMDWop, aliases=Dict())
     g
 end
 
+
+
+using Graphs: SimpleDiGraph, Graphs
+struct DimensionGraph
+  nodegraph
+  dimgraph
+  nodes
+  concomps
+end
+
+function DimensionGraph(g)
+  dimnodes = Tuple{Int,Int}[]
+  for i in eachindex(g.nodes)
+    for d in 1:ndims(g.nodes[i])
+      push!(dimnodes,(i,d))
+    end
+  end
+  dimsgraph = SimpleDiGraph(length(dimnodes))
+  for conn in g.connections
+    for (i_in,inid) in enumerate(conn.inputids)
+      li_in = getloopinds(conn.inwindows[i_in])
+      for (i_out,outid) in enumerate(conn.outputids)
+        li_out = getloopinds(conn.outwindows[i_out])
+        matches = find_matches(li_in, li_out)
+        for m in matches 
+          innode = findfirst(==((inid,first(m))),dimnodes)
+          outnode = findfirst(==((outid,last(m))),dimnodes)
+          Graphs.add_edge!(dimsgraph,Graphs.Edge(innode,outnode))
+        end
+      end
+    end
+  end
+  dimcons = Graphs.connected_components(dimsgraph)
+  DimensionGraph(g,dimsgraph,dimnodes,dimcons)
+end
+
+function find_matches(t1,t2)
+  matches = Pair{Int,Int}[]
+  cands = union(t1,t2)
+  for c in cands
+    i1 = findfirst(==(c),t1)
+    i2 = findfirst(==(c),t2)
+    !isnothing(i1) && !isnothing(i2) && push!(matches,i1=>i2)
+  end
+  matches
+end
+struct DirectMerge end
+struct BlockMerge
+  possible_breaks::Vector{Int}
+end
+
+#Determine possible window breaks of the node operation where units are in the domain
+# of the downstream window operation
+function possible_breaks(dg,inode)
+  mynode,mydim = dg.nodes[inode]
+  inputnodes = Graphs.inneighbors(dg.nodegraph,mynode)
+  outputnodes = Graphs.outneighbors(dg.nodegraph,mynode)
+  inwindows = map(inputnodes) do innode
+    inedge,iinput,ioutput = get_edge(dg.nodegraph,innode,mynode)
+    inedge.outwindows[ioutput].windows.members[mydim]
+  end
+  outwindows = map(outputnodes) do outnode
+    outedge,iinput,ioutput = get_edge(dg.nodegraph,mynode,outnode)
+    outedge.inwindows[iinput].windows.members[mydim]
+  end
+  if isempty(inwindows) || isempty(outwindows) 
+    return nothing
+  end
+  if allequal([inwindows;outwindows])
+    return DirectMerge()
+  end
+  startval = minimum(windowminimum,inwindows)
+  maxval = maximum(windowmaximum,outwindows)
+  breakvals = Int[]
+  endval = startval
+  while endval <= maxval
+    endval_candidates_in = map(inwindows) do iw
+      lastcandidate = last_contains_value(iw,endval)
+      if lastcandidate > length(iw)
+        return maxval+1
+      else
+        maximum(iw[lastcandidate])
+      end
+    end
+    endval_candidates_out = map(outwindows) do iw
+      lastcandidate = last_contains_value(iw,endval)
+      if lastcandidate > length(iw)
+        return maxval+1
+      else
+        maximum(iw[lastcandidate])
+      end
+    end
+    if allequal(endval_candidates_in) && allequal(endval_candidates_out) && 
+      first(endval_candidates_in)==first(endval_candidates_out)
+        push!(breakvals,first(endval_candidates_in))
+        endval = endval + 1
+    else
+      endval = max(maximum(endval_candidates_in),maximum(endval_candidates_out))
+    end
+  end
+  return BlockMerge(breakvals)
+end

@@ -15,3 +15,13 @@ function rangelt(x,y)
     end
     return false
 end
+
+windowminimum(w::AbstractVector{<:Number}) = minimum(w)
+windowminimum(w) = minimum(minimum,w)
+
+windowmaximum(w::AbstractVector{<:Number}) = maximum(w)
+windowmaximum(w) = maximum(maximum,w)
+
+last_contains_value(w::AbstractVector{<:Number},i) = findlast(<=(i),w)
+last_contains_value(w::AbstractRange,i) = searchsortedlast(w,i)
+last_contains_value(w,i) = findlast(r->maximum(r)<=i,w)
