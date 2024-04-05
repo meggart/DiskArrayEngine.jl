@@ -239,59 +239,29 @@ function find_matches(t1,t2)
   end
   matches
 end
-struct DirectMerge end
-struct BlockMerge
-  possible_breaks::Vector{Int}
-end
 
-#Determine possible window breaks of the node operation where units are in the domain
-# of the downstream window operation
-function possible_breaks(dg,inode)
-  mynode,mydim = dg.nodes[inode]
-  inputnodes = Graphs.inneighbors(dg.nodegraph,mynode)
-  outputnodes = Graphs.outneighbors(dg.nodegraph,mynode)
-  inwindows = map(inputnodes) do innode
-    inedge,iinput,ioutput = get_edge(dg.nodegraph,innode,mynode)
-    inedge.outwindows[ioutput].windows.members[mydim]
-  end
-  outwindows = map(outputnodes) do outnode
-    outedge,iinput,ioutput = get_edge(dg.nodegraph,mynode,outnode)
-    outedge.inwindows[iinput].windows.members[mydim]
-  end
-  if isempty(inwindows) || isempty(outwindows) 
-    return nothing
-  end
-  if allequal([inwindows;outwindows])
-    return DirectMerge()
-  end
-  startval = minimum(windowminimum,inwindows)
-  maxval = maximum(windowmaximum,outwindows)
-  breakvals = Int[]
-  endval = startval
-  while endval <= maxval
-    endval_candidates_in = map(inwindows) do iw
-      lastcandidate = last_contains_value(iw,endval)
-      if lastcandidate > length(iw)
-        return maxval+1
-      else
-        maximum(iw[lastcandidate])
-      end
-    end
-    endval_candidates_out = map(outwindows) do iw
-      lastcandidate = last_contains_value(iw,endval)
-      if lastcandidate > length(iw)
-        return maxval+1
-      else
-        maximum(iw[lastcandidate])
-      end
-    end
-    if allequal(endval_candidates_in) && allequal(endval_candidates_out) && 
-      first(endval_candidates_in)==first(endval_candidates_out)
-        push!(breakvals,first(endval_candidates_in))
-        endval = endval + 1
-    else
-      endval = max(maximum(endval_candidates_in),maximum(endval_candidates_out))
-    end
-  end
-  return BlockMerge(breakvals)
+
+function eliminate_node(nodegraph,i_eliminate,mergestrategy)
+    inconids = inconnections(nodegraph,i_eliminate)
+    outconids = outconnections(nodegraph,i_eliminate)
+    inconns = nodegraph.connections[inconids]
+    outconns = nodegraph.connections[outconids]
+
+    inconn = only(inconns)
+    outconn = only(outconns)
+
+    newop = merge_operations(mergestrategy,inconn,outconn,i_eliminate)
+
+    newinputids = [inconn.inputids;filter(!=(i_eliminate),outconn.inputids)]
+    inwindows2 = deepcopy(outconn.inwindows)
+
+    dimidmap = create_loopdimmap(inconn,outconn,i_eliminate)
+    i_keep = findall(!=(i_eliminate),outconn.inputids)
+    addinwindows = replace_dimids.(inwindows2[i_keep],(dimidmap,))
+    newinwindows = (inconn.inwindows...,addinwindows...)
+    newoutwindows = replace_dimids.(outconn.outwindows,(dimidmap,))
+    newconn = MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
+
+    deleteat!(nodegraph.connections,[inconids;outconids])
+    push!(nodegraph.connections,newconn)
 end

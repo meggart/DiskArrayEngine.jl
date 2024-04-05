@@ -81,6 +81,8 @@ function getwindowsize(inars, outspecs)
   function addsize!(ia,d)
     for (s,li) in zip(size(ia.windows),getloopinds(ia))
       if haskey(d,li)
+        @show d
+        @show li,s
         if d[li] != s
           error("Inconsistent Loop windows")
         end

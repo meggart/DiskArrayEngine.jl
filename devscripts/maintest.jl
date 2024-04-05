@@ -33,7 +33,7 @@ r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups),strategy=:direct)
 
 r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
 
-r3 = r .- 5
+r3 = r .- 273.15
 
 #finalres = r2 .+ r3
 
@@ -43,7 +43,7 @@ g = DAE.MwopGraph()
 DAE.to_graph!(g,r3.op);
 DAE.remove_aliases!(g)
 using CairoMakie, GraphMakie
-p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
+#p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
 
 
 
@@ -52,7 +52,7 @@ import DiskArrayEngine: getloopinds
 
 dg = DAE.DimensionGraph(g)
 
-graphplot(dg.dimgraph,ilabels = string.(dg.nodes))
+#graphplot(dg.dimgraph,ilabels = string.(dg.nodes))
 
 
 allmerges = Dict(Iterators.flatten(map(dg.concomps) do comps
@@ -68,45 +68,38 @@ nodemergestrategies = map(enumerate(dg.nodegraph.nodes)) do (inode,mainnode)
   end
 end
 
-
-
-using Graphs
 i_eliminate = findfirst(nodemergestrategies) do strat
   !isempty(strat) && !all(isnothing,strat) && all(i->isa(i,DAE.DirectMerge),strat)
 end
-inconids = DAE.inconnections(dg.nodegraph,i_eliminate)
-outconids = DAE.outconnections(dg.nodegraph,i_eliminate)
-inconns = dg.nodegraph.connections[inconids]
-outconns = dg.nodegraph.connections[outconids]
 
-inconn = only(inconns)
-outconn = only(outconns)
-
-newop = DAE.merge_operations(inconn,outconn,i_eliminate)
-newinputids = [inconn.inputids;filter(!=(i_eliminate),outconn.inputids)]
-inwindows2 = deepcopy(outconn.inwindows)
-i_keep = findall(!=(i_eliminate),outconn.inputids)
-newinwindows = (inconn.inwindows...,inwindows2[i_keep]...)
-newconn = DAE.MwopConnection(newinputids,outconn.outputids,newop,newinwindows,outconn.outwindows)
-
-
-
-deleteat!(dg.nodegraph.connections,[inconids;outconids])
-push!(dg.nodegraph.connections,newconn)
+DAE.eliminate_node(dg.nodegraph,i_eliminate,DAE.DirectMerge())
 
 remaining_conn = only(dg.nodegraph.connections)
 
 op = remaining_conn.f
-inputs = dg.nodegraph.nodes[remaining_conn.inputids]
+inputs = InputArray.(dg.nodegraph.nodes[remaining_conn.inputids],remaining_conn.inwindows)
+outspecs = map(dg.nodegraph.nodes[remaining_conn.outputids],remaining_conn.outwindows) do outnode,outwindow
+  (;lw=outwindow,chunks=outnode.chunks,ismem=outnode.ismem)
+end
+mergedop = DAE.GMDWop(inputs,outspecs,op)
 
+lr = DAE.optimize_loopranges(mergedop,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
+outar = zeros(Float32,90,516)
+runner = DAE.LocalRunner(mergedop,lr,(outar,))
+# inow = (1:1, 1:16, 1:67)
+# inbuffers_wrapped = DAE.read_range.((inow,),mergedop.inars,runner.inbuffers_pure);
+# outbuffers_now = DAE.extract_outbuffer.((inow,),mergedop.outspecs,mergedop.f.init,mergedop.f.buftype,runner.outbuffers)
+# DAE.run_block(mergedop,inow,inbuffers_wrapped,outbuffers_now,true)
+# DAE.put_buffer.((inow,),mergedop.f.finalize, outbuffers_now, runner.outbuffers, runner.outars,nothing)
+# runner.inbuffers_pure
 
+run(runner)
+
+outar
+
+heatmap(outar)
 
 p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
-
-
-f1(a,x) = a*x
-f2(x,y) = x+y
-fcomb = PartialFunctionChain(f1,f2,Val((1,3)),Val(((true,1),(false,2))))
 
 
 
@@ -116,52 +109,6 @@ fcomb = PartialFunctionChain(f1,f2,Val((1,3)),Val(((true,1),(false,2))))
 # the whole dimension
 
 
-
-function mergewindow(incoming,outgoing)
-  
-end
-
-
-allequal(outwindows)
-outwindows[1] == outwindows[2]
-inedges[1]
-
-dimnodes[6]
-
-inops = []
-outops = []
-node_to_merge = 3
-for c in g.connections
-  iin = findfirst(==(node_to_merge),c.outputids)
-  iout = findfirst(==(node_to_merge),c.inputids)
-  !isnothing(iin) && push!(inops,(iin,c))
-  !isnothing(iout) && push!(outops,(iout,c))
-end
-
-#node_dimension_map maps the dimensions from every input op
-
-i,conn = first(inops)
-nodedim = DAE.getsubndims(conn.outwindows[i])
-innodemaps = map(inops) do (i,conn)
-  inds = DAE.getloopinds(conn.outwindows[i])
-  Dict(j=>i for (i,j) in enumerate(inds))
-end
-outnodemaps = map(outops) do (i,conn)
-  inds = DAE.getloopinds(conn.inwindows[i])
-  Dict(j=>i for (i,j) in enumerate(inds))
-end
-dimtomerge = 1
-inwindows = map(inops,innodemaps) do map
-  ii = findfirst(==(dimtomerge),innodemaps)
-  if ii !== nothing
-
-  end
-end
-    
-
-conn.outputids[i]
-
-  
 
 aout = DAE.compute(r)
 
