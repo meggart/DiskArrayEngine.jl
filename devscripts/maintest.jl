@@ -27,13 +27,13 @@ t = g["time"]
 tvec = timedecode(t[:],t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups),strategy=:direct)
+r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups),strategy=:reduce)
 
 #compute(r)
 
 r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
 
-r3 = r .- 273.15
+r3 = r .+ 273.15
 
 #finalres = r2 .+ r3
 
@@ -70,6 +70,46 @@ end
 
 i_eliminate = findfirst(nodemergestrategies) do strat
   !isempty(strat) && !all(isnothing,strat) && all(i->isa(i,DAE.DirectMerge),strat)
+end
+
+i_eliminate = findfirst(nodemergestrategies) do strat
+  !isempty(strat) && !all(isnothing,strat)
+end
+
+nodemergestrategies[2]
+
+nodegraph = dg.nodegraph
+
+inconids = DAE.inconnections(nodegraph,i_eliminate)
+outconids = DAE.outconnections(nodegraph,i_eliminate)
+inconns = nodegraph.connections[inconids]
+outconns = nodegraph.connections[outconids]
+
+inconn = only(inconns)
+outconn = only(outconns)
+
+struct BlockFunctionChain{F1,F2,ARG1,ARG2}
+  func1::F1
+  func2::F2
+  arg1::Val{ARG1}
+  arg2::Val{ARG2}
+end
+function run_block(f::GMDWop{<:Any,<:Any,<:Any,<:UserOp{<:BlockFunctionChain}},inow,inbuffers_wrapped,outbuffers_now,threaded)
+  inbuffers1 = select_inbuffers1(f.f.f,inbuffers_wrapped)
+  outbuffers = select_outbuffers1(f.f.f,outbuffers_now)
+  inow1 = select_inow(f.f.f,inow)
+
+  run_block(f.f.f.func1,inow1,)
+  
+  inbuffers2 = select_inbuffers2(f.f.f,inbuffers_wrapped,outbuffers_now)
+  outbuffers2 = select_outbuffers2(f.f.f,outbuffers_now)
+
+  arg1 = map(Base.Fix1(getindex,x),ARG1)
+  r = p.func1(arg1...)
+  arg2 = map(ARG2) do (fromout,i)
+    fromout ? r : x[i]
+  end
+  p.func2(arg2...)
 end
 
 DAE.eliminate_node(dg.nodegraph,i_eliminate,DAE.DirectMerge())
