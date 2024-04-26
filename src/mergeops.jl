@@ -36,15 +36,15 @@ function merge_operations(::DirectMerge,inconn,outconn,to_eliminate)
     inow = length(arg1)+1
     arg2 = Tuple{Bool,Int}[]
     if outmutating 
-    push!(arg2,(false,1))
+      push!(arg2,(false,1))
     end
     for id in outconn.inputids
-    if id == to_eliminate
+      if id == to_eliminate
         push!(arg2,(true,1))
-    else
+      else
         push!(arg2,(false,inow))
         inow=inow+1
-    end
+      end
     end
     arg2 = (arg2...,)
     newinnerf = PartialFunctionChain(inconn.f.f.f,outconn.f.f.f,Val(arg1),Val(arg2))
@@ -53,7 +53,6 @@ function merge_operations(::DirectMerge,inconn,outconn,to_eliminate)
         newfunc,
         outconn.f.red,
         outconn.f.init,
-        (inconn.f.filters...,outconn.f.filters...),
         outconn.f.finalize,
         outconn.f.buftype,
         outconn.f.outtype,
@@ -63,16 +62,14 @@ end
 
 function replace_dimids(lw::LoopWindows,dimidmap)
   lr = getloopinds(lw)
-  newlr = map(lr) do l
-    if haskey(dimidmap,l)
-      dimidmap[l]
-    else
-      l
-    end
-  end
+  newlr = map(dimidmap,lr)
   LoopWindows(lw.windows,Val(newlr))
 end
 
+struct DimMap
+  d::Dict{Int,Int}
+end
+(d::DimMap)(i::Int) = get(d.d,i,i)
 function create_loopdimmap(inconn,outconn,i_eliminate)
   i1 = findfirst(==(i_eliminate),inconn.outputids)
   i2 = findfirst(==(i_eliminate),outconn.inputids)
@@ -92,7 +89,7 @@ function create_loopdimmap(inconn,outconn,i_eliminate)
       end
     end
   end
-  dimidmap  
+  DimMap(dimidmap)
 end
 
 #Determine possible window breaks of the node operation where units are in the domain
@@ -145,4 +142,78 @@ function possible_breaks(dg,inode)
     end
   end
   return BlockMerge(breakvals)
+end
+
+
+struct BlockFunctionChain
+  funcs
+  args
+  isel
+  transfers::Vector{Pair{Int,Int}} # List of pairs containing the indices of outbuffer-inbuffer pairs to copy data
+end
+#Constructor to build a length-1 chain
+function BlockFunctionChain(f::Union{ElementFunction,BlockFunction},info)
+  nin,nout,nlw = info
+  funcs = [f]
+  args = [ntuple(identity,nin),ntuple(identity,nout)]
+  isel = [ntuple(identity,nlw)]
+  transfers = []
+  BlockFunctionChain(funcs,args,isel,transfers)
+end
+BlockFunctionChain(op::UserOp,info) = BlockFunctionChain(op.f,info)
+BlockFunctionChain(c::BlockFunctionChain,_,_,_) = c
+function build_chain(c1::BlockFunctionChain, c2::BlockFunctionChain, dimmap, transfer)
+  argspre = maximum(i->maximum.(i),c1.args)
+  args = [c1.args;map(i->i.+argspre,c2.args)]
+  funcs = [c1.funcs;c2.funcs]
+  isel = [c1.isel;map(i->dimmap.(i),c2.isel)]
+  inargspre = first(argspre)
+  outargspre = last(argspre)
+  transfers = copy(c1.transfers)
+  for t in c2.transfers
+    push!(transfers,(first(t)+outargspre) => (last(t)+inargspre))
+  end
+  push!(transfers,(first(transfer)+outargspre) => (last(transfer)+inargspre))
+  BlockFunctionChain(funcs,args,isel,transfers)
+end
+maxlr(lw::LoopWindows) = maximum(getloopinds(lw),init=0)
+function BlockFunctionChain(conn::MwopConnection)
+  nlr = max(maximum(maxlr,conn.inwindows,init=0),maximum(maxlr,conn.outwindows,init=0))
+  BlockFunctionChain(conn.f,(length(conn.inwindows),length(conn.outwindows),nlr))
+end
+
+
+
+function run_block(f::BlockFunctionChain,inow,inbuffers_wrapped,outbuffers_now,threaded)
+  
+  func1 = first(f.funcs)
+  args1 = first(f.args)
+  isel1 = first(f.isel)
+  inbuffers1 = map(Base.Fix1(getindex,inbuffers_wrapped),first(args1))
+  outbuffers1 = map(Base.Fix1(getindex,outbuffers_now),last(args1))
+  inow1 = map(Base.Fix1(getindex,inow),isel1)
+
+  run_block(func1,inow1,inbuffers1,outbuffers1,threaded)
+
+  @assert length(f.funcs) == length(f.args) == length(f.isel) == length(f.transfers)+1
+
+  for i in 2:length(f.funcs)
+    transfer = f.transfers[i-1]
+    for t in transfer
+      ob = outbuffers_now[first(t)]
+      ib = inbuffers_wrapped[last(t)]
+      broadcast!(ob.finalize,ib.a,ob.a)
+    end
+
+    func = f.funcs[i]
+    args = f.args[i]
+    isel = f.isel[i]
+    inbuffers = map(Base.Fix1(getindex,inbuffers_wrapped),first(args))
+    outbuffers = map(Base.Fix1(getindex,outbuffers_now),last(args))
+    inow = map(Base.Fix1(getindex,inow),isel)
+
+    run_block(func,inow,inbuffers,outbuffers,threaded)
+
+  end
+
 end

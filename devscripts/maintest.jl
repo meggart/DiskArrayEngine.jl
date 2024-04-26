@@ -29,9 +29,9 @@ groups = yearmonth.(tvec)
 
 r = aggregate_diskarray(a,mean,(1=>nothing,2=>8,3=>groups),strategy=:reduce)
 
-#compute(r)
+#a = compute(r)
 
-r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
+#r2 = aggregate_diskarray(r,maximum,(2=>nothing,))
 
 r3 = r .+ 273.15
 
@@ -78,6 +78,10 @@ end
 
 nodemergestrategies[2]
 
+inconn.outwindows[1].windows.members
+outconn.inwindows[1].windows.members
+
+
 nodegraph = dg.nodegraph
 
 inconids = DAE.inconnections(nodegraph,i_eliminate)
@@ -88,29 +92,74 @@ outconns = nodegraph.connections[outconids]
 inconn = only(inconns)
 outconn = only(outconns)
 
-struct BlockFunctionChain{F1,F2,ARG1,ARG2}
-  func1::F1
-  func2::F2
-  arg1::Val{ARG1}
-  arg2::Val{ARG2}
-end
-function run_block(f::GMDWop{<:Any,<:Any,<:Any,<:UserOp{<:BlockFunctionChain}},inow,inbuffers_wrapped,outbuffers_now,threaded)
-  inbuffers1 = select_inbuffers1(f.f.f,inbuffers_wrapped)
-  outbuffers = select_outbuffers1(f.f.f,outbuffers_now)
-  inow1 = select_inow(f.f.f,inow)
+chain1 = DAE.BlockFunctionChain(inconn)
+chain2 = DAE.BlockFunctionChain(outconn)
+dimmap = DAE.create_loopdimmap(inconn,outconn,i_eliminate)
+ifrom = findfirst(==(i_eliminate),inconn.outputids)
+ito = findfirst(==(i_eliminate),outconn.inputids)
+transfer = ifrom => ito
 
-  run_block(f.f.f.func1,inow1,)
-  
-  inbuffers2 = select_inbuffers2(f.f.f,inbuffers_wrapped,outbuffers_now)
-  outbuffers2 = select_outbuffers2(f.f.f,outbuffers_now)
+chain2.transfers
+chain1.transfers
+newfunc = DAE.build_chain(chain1,chain2,dimmap,transfer)
+newop = DAE.UserOp(
+  newfunc,
+  outconn.f.red,
+  (inconn.f.init...,outconn.f.init...),
+  outconn.f.finalize,
+  (inconn.f.buftype...,outconn.f.buftype...),
+  (inconn.f.outtype...,outconn.f.outtype...),
+  inconn.f.allow_threads && outconn.f.allow_threads,
+)
 
-  arg1 = map(Base.Fix1(getindex,x),ARG1)
-  r = p.func1(arg1...)
-  arg2 = map(ARG2) do (fromout,i)
-    fromout ? r : x[i]
-  end
-  p.func2(arg2...)
+
+newinputids = [inconn.inputids;outconn.inputids]
+inwindows2 = deepcopy(outconn.inwindows)
+addinwindows = DAE.replace_dimids.(inwindows2,(dimmap,))
+newinwindows = (inconn.inwindows...,addinwindows...)
+newoutwindows = DAE.replace_dimids.(outconn.outwindows,(dimmap,))
+newconn = MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
+
+nodegraph.nodes[i_eliminate] = DAE.InputArray(nothing,outconn.inwindows[ito])
+
+deleteat!(nodegraph.connections,[inconids;outconids])
+push!(nodegraph.connections,newconn)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+struct EnvFloat{T} <: AbstractFloat
+  val::T
+  mask::UInt8
 end
+Base.convert(T::Type{<:Number}, v::EnvFloat) = convert(T,v.val)
+Base.convert(::Type{EnvFloat}, x::Number) = EnvFloat(AbstractFloat(x),0x00)
+Base.convert(::Type{EnvFloat{T}},x::Number) where T = EnvFloat(convert(T,x),0x00)
+Base.convert(::Type{EnvFloat{T}}, x::EnvFloat) where T = EnvFloat(convert(T,x.val),x.mask)
+Base.promote_rule(::Type{EnvFloat{T}}, ::Type{S}) where {T,S<:Number} = EnvFloat{promote_type(T,S)}
+
+ef = EnvFloat(3.0,0x04)
+
+
+
+1
+
+
 
 DAE.eliminate_node(dg.nodegraph,i_eliminate,DAE.DirectMerge())
 

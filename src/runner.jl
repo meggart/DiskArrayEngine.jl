@@ -15,8 +15,6 @@ using Base.Cartesian
     _view(io, x.a,inds...)
 end
 
-
-
 function innercode(
     cI,
     f,
@@ -30,37 +28,28 @@ function innercode(
     myoutwork = map(xout) do x
         _view(x, cI.I, Output())
     end
-    #Apply filters
-    mvs = applyfilter(f,myinwork)
-    if any(mvs)
-        # Set all outputs to missing
-        foreach(ow -> fill!(ow, missing), myoutwork)
-    else
-        #Finally call the function
-        apply_function(f,myoutwork, myinwork)
-    end
+    apply_function(f,myoutwork, myinwork)
     nothing
 end
 
-function run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-    if !threaded || !op.f.allow_threads
-        run_block_single(inow, op.f, inbuffers_wrapped, outbuffers_now)
+function run_block(f,inow,inbuffers_wrapped,outbuffers_now,lspl)
+    if lspl === nothing
+        run_block_single(inow, f, inbuffers_wrapped, outbuffers_now)
     else
-        lspl = get_loopsplitter(op)
         @debug "Using $lspl to split loops"
-        run_block_threaded(inow, lspl,op.f, inbuffers_wrapped, outbuffers_now)
+        run_block_threaded(inow, lspl,f, inbuffers_wrapped, outbuffers_now)
     end
 end
 
-@noinline function run_block_single(loopRanges,f::UserOp,inbuffers, outbuffers)
+@noinline function run_block_single(loopRanges,f, inbuffers, outbuffers)
     for cI in CartesianIndices(loopRanges)
        innercode(cI,f,inbuffers, outbuffers)
     end
 end
 
-@noinline function run_block_threaded(loopRanges,lspl,f::UserOp,inbuffers,outbuffers)
+@noinline function run_block_threaded(loopRanges,lspl,f,inbuffers,outbuffers)
     tri, ntri = split_loopranges_threads(lspl,loopRanges)
-    if isempty(tri) 
+    if isempty(tri)
         run_block_single(loopRanges,f,inbuffers,outbuffers)
     else
         if isempty(ntri)
@@ -78,7 +67,16 @@ end
     end
 end
 
-function run_block(f::GMDWop{<:Any,<:Any,<:Any,<:UserOp{<:BlockFunction}},loopRanges,xin,xout,threaded)
+function run_block(op::GMDWop,loopRanges,xin,xout,threaded) 
+    lspl = if threaded && op.f.allow_threads
+        op.lspl
+    else
+        nothing
+    end
+    run_block(op.f.f,loopRanges,xin,xout,lspl)
+end
+
+function run_block(f::BlockFunction,loopRanges,xin,xout,lspl)
     i1 = first.(loopRanges)
     i2 = last.(loopRanges)
     myinwork = map(xin) do x
@@ -97,13 +95,13 @@ function run_block(f::GMDWop{<:Any,<:Any,<:Any,<:UserOp{<:BlockFunction}},loopRa
         rr = Base.IdentityUnitRange.(range.(iw1,iw2))
         OffsetArray(view(x.a, rr...),firsti .- 1)
     end
-    _run_block(f.f,myinwork,myoutwork,threaded)
+    _run_block(f,myinwork,myoutwork,isa(lspl,LoopIndSplitter))
 end
-function _run_block(f::UserOp{<:BlockFunction{<:Any,Mutating}},myinwork,myoutwork,threaded)
-    f.f.f(myoutwork...,myinwork...,f.args...;f.kwargs...,dims=getdims(f.f),threaded=threaded)
+function _run_block(f::BlockFunction{<:Any,Mutating},myinwork,myoutwork,threaded::Bool)
+    f.f(myoutwork...,myinwork...,dims=getdims(f),threaded=threaded)
 end
-function _run_block(f::UserOp{<:BlockFunction{<:Any,NonMutating}},myinwork,myoutwork,threaded)
-    r = f.f.f(myinwork...,f.args...;f.kwargs...,dims=getdims(f.f),threaded=threaded)
+function _run_block(f::BlockFunction{<:Any,NonMutating},myinwork,myoutwork,threaded::Bool)
+    r = f.f(myinwork...,dims=getdims(f),threaded=threaded)
     map(myoutwork,r) do o,ir
         o .= ir
     end
@@ -144,7 +142,8 @@ end
         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
         outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-        put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars,nothing)
+        put_buffer.((inow,),outbuffers_now,outars,nothing)
+        clean_aggregator.(outbuffers)
         update_progress!(progress)
     end
 end

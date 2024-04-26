@@ -1,10 +1,9 @@
 
 export create_userfunction
-struct UserOp{F,R,I,FILT,FIN,B,T}
+struct UserOp{F,R,I,FIN,B,T}
     f::F
     red::R
     init::I
-    filters::FILT
     finalize::FIN
     buftype::B
     outtype::T
@@ -73,34 +72,20 @@ function create_userfunction(
         f = CapturedArgsFunc(f,args,kwargs)
     end
     uf = is_blockfunction ? BlockFunction(f,m,Val(dims)) : ElementFunction(f,m)
-    UserOp(uf,red,init,filters,finalize,buftype,outtypes,allow_threads)
+    UserOp(uf,red,init,finalize,buftype,outtypes,allow_threads)
 end 
 
 
-
-
-
-applyfilter(f::UserOp,myinwork) = broadcast(docheck, f.filters, myinwork)
-function apply_function(f::UserOp{<:ElementFunction{<:Any,<:Mutating}},xout,xin) 
-    f.f.f(xout...,xin...)
+#applyfilter(f::UserOp,myinwork) = broadcast(docheck, f.filters, myinwork)
+function apply_function(f::ElementFunction{<:Any,<:Mutating},xout,xin) 
+    f.f(xout...,xin...)
 end
-function apply_function(f::UserOp{<:ElementFunction{<:Any,<:NonMutating},Nothing},xout,xin)
-    r = f.f.f(xin...)
+function apply_function(f::ElementFunction{<:Any,<:NonMutating},xout,xin)
+    r = f.f(xin...)
     if length(xout) == 1
         first(xout) .= r
     else
         foreach(xout,r) do x,y
-            x.=y
-        end
-    end
-end
-function apply_function(f::UserOp{<:ElementFunction{<:Any,<:NonMutating},<:Base.Callable},xout,xin)
-    r = f.f.f(xin...)
-    if length(xout) == 1
-        first(xout)[] = f.red(first(xout)[],r)
-    else
-        rr = f.red(xout,r)
-        foreach(xout,rr) do x,y
             x.=y
         end
     end

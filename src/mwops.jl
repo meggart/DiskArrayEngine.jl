@@ -92,15 +92,17 @@ function getwindowsize(inars, outspecs)
     end
   end
 
-struct GMDWop{N,I,O,F<:UserOp}
+struct GMDWop{N,I,O,F<:UserOp,SPL}
     inars::I
     outspecs::O
     f::F
     windowsize::NTuple{N,Int}
+    lspl::SPL
 end
 function GMDWop(inars, outspecs, f)
     s = getwindowsize(inars, outspecs)
-    GMDWop(inars,outspecs, f, s)
+    lspl = isa(f.f,BlockFunction) ? nothing : get_loopsplitter(length(s),outspecs)
+    GMDWop(inars,outspecs, f, s, lspl)
 end
 
 function create_outars(op,plan;par_only=false)

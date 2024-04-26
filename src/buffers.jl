@@ -1,10 +1,22 @@
 using FileWatching.Pidfile
 
-struct ArrayBuffer{A,O,LW}
+abstract type ArrayBuffer end
+
+struct InArrayBuffer{A,O,LW} <: ArrayBuffer
     a::A
     offsets::O
     lw::LW
 end
+struct OutArrayBuffer{A,O,LW,F} <: ArrayBuffer
+    a::A
+    offsets::O
+    lw::LW
+    finalize::F
+    nwritten::Base.RefValue{Int64}
+    ntot::Int
+end
+
+ArrayBuffer(a,offsets,lw) = InArrayBuffer(a,offsets,lw)
 
 getdata(c::ArrayBuffer) = c.a
 getloopinds(b::ArrayBuffer) = getloopinds(b.lw)
@@ -86,7 +98,7 @@ end
 
 "Creates buffers for all outputs, results in a tuple of Dicts holding the collection for each output"
 function generate_outbuffers(outars,func,loopranges)
-    generate_outbuffer_collection.(outars,func.buftype,(loopranges,))
+    generate_outbuffer_collection.(outars,func.buftype,(loopranges,),func.finalize)
 end
 
 struct BufferIndex{N}
@@ -99,7 +111,9 @@ offset_from_range(r::BufferIndex) = offset_from_range.(r.indranges)
 function read_range(r,ia,buffer)
     fill!(buffer,zero(eltype(buffer)))
     inds = get_bufferindices(r,ia)
-    buffer[Base.OneTo.(length.(inds.indranges))...] = ia.a[inds.indranges...]
+    if !isnothing(ia.a)
+        buffer[Base.OneTo.(length.(inds.indranges))...] = ia.a[inds.indranges...]
+    end
     ArrayBuffer(buffer,offset_from_range(inds),ia.lw)
 end
 
@@ -112,18 +126,32 @@ function get_bufferindices(r,outspecs)
 end
 get_bufferindices(r::BufferIndex,_) = r
 
-struct OutputAggregator{K,V,N,R}
+struct OutputAggregator{K,V,N,R,F}
     buffers::Dict{K,V}
     bufsize::NTuple{N,Int}
     repeats::R
+    finalize::F
 end
 
+"""
+Removes all outout buffers from an output aggregator that have been successfully put to disk
+"""
+function clean_aggregator(o::OutputAggregator)
+    allkeys = collect(keys(o.buffers))
+    for k in allkeys
+        if mustdelete(o.buffers[k])
+            delete!(o.buffers,k)
+        end
+    end
+end
 
 function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,red)
     if o1.bufsize != o2.bufsize
-        @info "Warning something is really of with buffer sizes"
+        @info "Warning something is really off with buffer sizes"
     end
-    o3 = merge(o1.buffers,o2.buffers) do (n1,ntot1,b1),(n2,ntot2,b2)
+    o3 = merge(o1.buffers,o2.buffers) do b1,b2
+        n1 = b1.nwritten[]
+        n2 = b2.nwritten[]
         @debug myid(), "Merging aggregators of lengths ", n1[], " and ", n2[], " when total mustwrites is ", ntot1
         @assert b1.offsets == b2.offsets
         @assert b1.lw.lr == b2.lw.lr
@@ -131,14 +159,15 @@ function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,r
         for (m1,m2) in zip(b1.lw.windows.members,b2.lw.windows.members)
             @assert m1==m2
         end
-        @assert ntot1 == ntot2
+        @assert b1.ntot == b2.ntot
+        @assert b1.finalize == b2.finalize
         merged = red.(b1.a,b2.a)
         if !isa(merged, AbstractArray)
             merged = fill(merged)
         end
-        Ref(n1[]+n2[]),ntot1,ArrayBuffer(merged,b1.offsets,b1.lw)
+        OutArrayBuffer(merged,b1.offsets,b1.lw,b1.finalize,Ref(n1[]+n2[]),b1.ntot)
     end
-    OutputAggregator(o3,o1.bufsize,o1.repeats)
+    OutputAggregator(o3,o1.bufsize,o1.repeats,o1.finalize)
 end
 
 buffer_mergefunc(red,_) = (buf1,buf2) -> merge_outbuffer_collection.(buf1,buf2,(red,))
@@ -150,24 +179,25 @@ function merge_all_outbuffers(outbuffers,red)
     r
 end
 
-function flush_all_outbuffers(outbuffers,fin,outars,piddir)
-    @assert length(outbuffers) == length(outars) == length(fin)
-    for (coll,outar,f) in zip(outbuffers,outars,fin)
+function flush_all_outbuffers(outbuffers,outars,piddir)
+    @assert length(outbuffers) == length(outars)
+    for (coll,outar) in zip(outbuffers,outars)
         allkeys = collect(keys(coll.buffers))
         @debug "Putting keys $allkeys"
         for k in allkeys
-            put_buffer(k,f, last(coll.buffers[k]), coll, outar, piddir)
+            put_buffer(k,coll.buffers[k], outar, piddir)
         end
+        clean_buffer(coll)
     end
     outbuffers
 end
   
-function generate_outbuffer_collection(ia,buftype,loopranges) 
+function generate_outbuffer_collection(ia,buftype,loopranges,finalize) 
     nd = getsubndims(ia)
     bufsize = getbufsize(ia,loopranges)
-    d = Dict{BufferIndex{nd},Tuple{Base.RefValue{Int},Int,ArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(ia.lw)}}}()
+    d = Dict{BufferIndex{nd},OutArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(ia.lw),typeof(finalize)}}()
     reps = precompute_bufferrepeat(loopranges,ia)
-    OutputAggregator(d,bufsize,reps)
+    OutputAggregator(d,bufsize,reps,finalize)
 end
 
 struct ConstDict{V}
@@ -188,24 +218,23 @@ end
 function extract_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
     inds = get_bufferindices(r,outspecs)
     offsets = offset_from_range(inds)
-    n,ntot,b = get!(buffer.buffers,inds) do 
+    b = get!(buffer.buffers,inds) do 
         buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
-        buf = ArrayBuffer(buf,offsets,outspecs.lw)
         ntot = buffer.repeats[inds]
-        (Ref(0),ntot,buf)
+        buf = OutArrayBuffer(buf,offsets,outspecs.lw,buffer.finalize,Ref(0),ntot)
     end
-    n[] = n[]+1 
+    b.nwritten[] = b.nwritten[]+1 
     b
 end
 
+mustdelete(buffer::OutArrayBuffer) = buffer.nwritten[] == -1 
 
 "Check if maximum number of aggregations has happened for a buffer"
-function mustwrite(inds,bufdict) 
-    n_written,ntot,_ = bufdict.buffers[inds]
-    if n_written[] > ntot
+function mustwrite(buffer::OutArrayBuffer) 
+    if buffer.nwritten[] > buffer.ntot
         error("Something is wrong, buffer got wrapped more often than it should. Make sure to use a runner only once")
     else
-        n_written[] == ntot
+        buffer.nwritten[] == buffer.ntot
     end
 end
 
@@ -215,11 +244,11 @@ extract_channel(x::RemoteChannel) = first(x)
 put_channel(c::RemoteChannel,x) = put!(c,x)
 
 "Checks if output buffers have accumulated to the end and exports to output array"
-function put_buffer(r, fin, bufnow, bufferdict, outarc, piddir)
+function put_buffer(r, bufnow, outarc, piddir)
   @debug "Putting buffers"
   bufinds = get_bufferindices(r,bufnow)
-  if mustwrite(bufinds,bufferdict)
-    offsets = offset_from_range(bufinds)
+  if mustwrite(bufnow)
+    fin = bufnow.finalize
     outar = extract_channel(outarc)
     i1 = first.(axes(outar))
     i2 = last.(axes(outar))
@@ -239,11 +268,24 @@ function put_buffer(r, fin, bufnow, bufferdict, outarc, piddir)
         @debug "$(bufnow.a) $r2"
         broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
     end
-    delete!(bufferdict.buffers,bufinds)
+    bufnow.nwritten[] = -1
     put_channel(outarc,outar)
     true
   else
     false
+  end
+end
+
+"Function to finalize and remove buffers without writing to an array"
+function put_buffer(_, bufnow, ::Nothing, _)
+  @debug "Putting buffers"
+  if mustwrite(bufnow)
+    fin = bufnow.fin
+    res = broadcast(fin,bufnow.a)
+    bufnow.nwritten[] = -1
+    res
+  else
+    nothing
   end
 end
 

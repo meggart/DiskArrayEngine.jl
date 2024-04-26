@@ -60,6 +60,7 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
             run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
             @debug myid(), "Finished running block ", inow
             put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
+            clean_aggregator.(outbuffers)
             true
         end
     end
@@ -75,8 +76,8 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
         buffers_used = fetch.(buffers_used)
         collections_merged = merge_all_outbuffers(buffers_used,op.f.red)
         @debug "Writing merged buffers $(typeof(collections_merged))"
-        unflushed_buffers = Dagger.spawn(collections_merged,op.f.finalize,outars,piddir) do cm,fin,outars,pdir
-            flush_all_outbuffers(cm,fin,outars,pdir)
+        unflushed_buffers = Dagger.spawn(collections_merged,outars,piddir) do cm,outars,pdir
+            flush_all_outbuffers(cm,outars,pdir)
         end
         if !isempty(outbuffers)
             outbuffers = last(outbuffers)
