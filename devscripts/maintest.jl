@@ -78,8 +78,6 @@ end
 
 nodemergestrategies[2]
 
-inconn.outwindows[1].windows.members
-outconn.inwindows[1].windows.members
 
 
 nodegraph = dg.nodegraph
@@ -113,11 +111,32 @@ newop = DAE.UserOp(
 )
 
 
+inconn.inwindows[1].windows.members[3]
+inconn.outwindows[1].windows.members[2]
+outconn.inwindows[1].windows.members[2]
+
+
 newinputids = [inconn.inputids;outconn.inputids]
 inwindows2 = deepcopy(outconn.inwindows)
 addinwindows = DAE.replace_dimids.(inwindows2,(dimmap,))
 newinwindows = (inconn.inwindows...,addinwindows...)
 newoutwindows = DAE.replace_dimids.(outconn.outwindows,(dimmap,))
+
+struct NestedWindow{T,P<:AbstractVector{T}} <: AbstractVector{T}
+  parent::P
+  groups::Vector{UnitRange{Int}}
+end
+Base.size(w::NestedWindow) = (length(w.groups),)
+Base.getindex(w::NestedWindow, i::Int) = w.groups[i]
+inner_index(g::NestedWindow, i) = (ip for j in i for ip in g.groups[j])
+
+parent = inconn.outwindows[1].windows.members[2]
+blocknow = nodemergestrategies[2][2]
+
+
+blocknow.possible_breaks
+
+
 newconn = MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
 
 nodegraph.nodes[i_eliminate] = DAE.InputArray(nothing,outconn.inwindows[ito])
