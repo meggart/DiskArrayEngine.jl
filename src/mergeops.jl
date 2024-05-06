@@ -182,6 +182,14 @@ function BlockFunctionChain(conn::MwopConnection)
   BlockFunctionChain(conn.f,(length(conn.inwindows),length(conn.outwindows),nlr))
 end
 
+struct NestedWindow{T,P<:AbstractVector{T}} <: AbstractVector{T}
+  parent::P
+  groups::Vector{UnitRange{Int}}
+end
+Base.size(w::NestedWindow) = (length(w.groups),)
+Base.getindex(w::NestedWindow, i::Int) = w.groups[i]
+inner_index(g::NestedWindow) = (g.parent[ip] for j in i for ip in g.groups[j])
+
 
 
 function run_block(f::BlockFunctionChain,inow,inbuffers_wrapped,outbuffers_now,threaded)
@@ -207,13 +215,73 @@ function run_block(f::BlockFunctionChain,inow,inbuffers_wrapped,outbuffers_now,t
 
     func = f.funcs[i]
     args = f.args[i]
-    isel = f.isel[i]
     inbuffers = map(Base.Fix1(getindex,inbuffers_wrapped),first(args))
     outbuffers = map(Base.Fix1(getindex,outbuffers_now),last(args))
-    inow = map(Base.Fix1(getindex,inow),isel)
-
+    for buffer in inbuffers
+      foreach(buffer.lw.windows.members,getloopinds(buffer)) do window,li
+        if window isa NestedWindow
+          inow = Base.setindex(inow,collect(inner_index(window,inow[li])),li)
+        end
+      end
+    end
     run_block(func,inow,inbuffers,outbuffers,threaded)
 
   end
 
 end
+
+function get_groups(windows, strategies)
+  Dict(filter(!isnothing,map(windows.windows.members,strategies,getloopinds(windows)) do w,strat,il
+    r = blockmerge_groups(w,strat)
+    if r === nothing
+      nothing
+    else
+      il=>r
+    end
+  end))
+end
+
+function blockwindows_in(inconn,nodemergestrategies,i_eliminate)
+  outnodetorep = findfirst(==(i_eliminate),inconn.outputids)
+  outwindows = inconn.outwindows[outnodetorep]
+  strategies = nodemergestrategies[i_eliminate]
+  groups = get_groups(outwindows,strategies)
+  newinwindows = _blockwindows.(inconn.inwindows,(groups,))
+  newoutwindows = _blockwindows.(inconn.outwindows,(groups,))
+  newinwindows, newoutwindows
+end
+
+function blockwindows_out(outconn,nodemergestrategies,i_eliminate)
+  nodetorep = findfirst(==(i_eliminate),outconn.inputids)
+  windows = outconn.inwindows[nodetorep]
+  strategies = nodemergestrategies[i_eliminate]
+  groups = get_groups(windows,strategies)
+  newinwindows = _blockwindows.(outconn.inwindows,(groups,))
+  newoutwindows = _blockwindows.(outconn.outwindows,(groups,))
+  newinwindows, newoutwindows
+end
+
+function _blockwindows(windows,groups)
+  #Now fix the corresponding input windows
+  newwindows = map(windows.windows.members,getloopinds(windows)) do w,il
+    if haskey(groups,il)
+      NestedWindow(w,groups[il])
+    else
+      w
+    end
+  end
+  LoopWindows(ProductArray(newwindows),windows.lr)
+end
+
+blockmerge_groups(parent, _) = nothing
+function blockmerge_groups(parent, mergestrat::BlockMerge)
+  i1 = 1
+  groups = UnitRange{Int}[]
+  for b in mergestrat.possible_breaks
+    inext = findlast(<=(b),parent)
+    push!(groups,i1:inext)
+    i1 = inext + 1
+  end
+  groups
+end
+

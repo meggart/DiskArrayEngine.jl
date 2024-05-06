@@ -110,31 +110,38 @@ newop = DAE.UserOp(
   inconn.f.allow_threads && outconn.f.allow_threads,
 )
 
-
-inconn.inwindows[1].windows.members[3]
-inconn.outwindows[1].windows.members[2]
-outconn.inwindows[1].windows.members[2]
+using DiskArrayEngine: blockwindows_in, blockwindows_out
 
 
-newinputids = [inconn.inputids;outconn.inputids]
-inwindows2 = deepcopy(outconn.inwindows)
-addinwindows = DAE.replace_dimids.(inwindows2,(dimmap,))
-newinwindows = (inconn.inwindows...,addinwindows...)
-newoutwindows = DAE.replace_dimids.(outconn.outwindows,(dimmap,))
+inconninwindows,inconnoutwindows = blockwindows_in(inconn,nodemergestrategies,i_eliminate)
 
-struct NestedWindow{T,P<:AbstractVector{T}} <: AbstractVector{T}
-  parent::P
-  groups::Vector{UnitRange{Int}}
-end
-Base.size(w::NestedWindow) = (length(w.groups),)
-Base.getindex(w::NestedWindow, i::Int) = w.groups[i]
-inner_index(g::NestedWindow, i) = (ip for j in i for ip in g.groups[j])
+outconninwindows,outconnoutwindows = blockwindows_out(outconn,nodemergestrategies,i_eliminate)
 
-parent = inconn.outwindows[1].windows.members[2]
-blocknow = nodemergestrategies[2][2]
+inconninwindows[1]
 
 
-blocknow.possible_breaks
+
+# newinputids = [inconn.inputids;outconn.inputids]
+# inwindows2 = deepcopy(outconn.inwindows)
+# addinwindows = DAE.replace_dimids.(inwindows2,(dimmap,))
+# newinwindows = (inconn.inwindows...,addinwindows...)
+# newoutwindows = DAE.replace_dimids.(outconn.outwindows,(dimmap,))
+
+
+
+
+
+newinwindows, newoutwindows = DAE.blockwindows_in(inconn,nodemergestrategies,i_eliminate)
+
+
+inner_index(wout,2:4) |> collect
+
+inparent = inconn.inwindows[1].windows.members[3]
+win = NestedWindow(inparent,groups)
+inner_index
+
+DiskArrays.find_subranges_sorted(blocknow.possible_breaks)
+
 
 
 newconn = MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
