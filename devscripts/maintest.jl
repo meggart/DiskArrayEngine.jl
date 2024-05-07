@@ -19,6 +19,9 @@ using Distributed
 using LoggingExtras
 using Test
 using DataStructures: OrderedSet
+1
+g = zopen("https://s3.bgc-jena.mpg.de:9000/esdl-esdc-v2.1.1/esdc-8d-0.25deg-184x90x90-2.1.1.zarr")
+
 
 g = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/",fill_as_missing=true);
 a = g["air_temperature_2m"];
@@ -112,46 +115,43 @@ newop = DAE.UserOp(
 
 using DiskArrayEngine: blockwindows_in, blockwindows_out
 
-
 inconninwindows,inconnoutwindows = blockwindows_in(inconn,nodemergestrategies,i_eliminate)
 
 outconninwindows,outconnoutwindows = blockwindows_out(outconn,nodemergestrategies,i_eliminate)
+outconninwindows = DAE.replace_dimids.(outconninwindows,(dimmap,))
+outconnoutwindows = DAE.replace_dimids.(outconnoutwindows,(dimmap,))
 
-inconninwindows[1]
+outinputids = deepcopy(outconn.inputids)
+newinputids = [inconn.inputids;outinputids]
+newoutputids = [inconn.outputids;outconn.outputids]
 
+newinwindows = (inconninwindows...,outconninwindows...)
+newoutwindows = (inconnoutwindows..., outconnoutwindows...)
 
+newoutwindows = DAE.replace_dimids.(newoutwindows,(dimmap,))
 
-# newinputids = [inconn.inputids;outconn.inputids]
-# inwindows2 = deepcopy(outconn.inwindows)
-# addinwindows = DAE.replace_dimids.(inwindows2,(dimmap,))
-# newinwindows = (inconn.inwindows...,addinwindows...)
-# newoutwindows = DAE.replace_dimids.(outconn.outwindows,(dimmap,))
+newconn = DAE.MwopConnection(newinputids,newoutputids,newop,newinwindows,newoutwindows)
 
-
-
-
-
-newinwindows, newoutwindows = DAE.blockwindows_in(inconn,nodemergestrategies,i_eliminate)
-
-
-inner_index(wout,2:4) |> collect
-
-inparent = inconn.inwindows[1].windows.members[3]
-win = NestedWindow(inparent,groups)
-inner_index
-
-DiskArrays.find_subranges_sorted(blocknow.possible_breaks)
-
-
-
-newconn = MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
-
-nodegraph.nodes[i_eliminate] = DAE.InputArray(nothing,outconn.inwindows[ito])
+nodegraph.nodes[i_eliminate] = (chunks=nothing,ismem=true,tempnode=true)
 
 deleteat!(nodegraph.connections,[inconids;outconids])
 push!(nodegraph.connections,newconn)
 
 
+
+remaining_conn = only(dg.nodegraph.connections)
+
+op = remaining_conn.f
+inputs = InputArray.(dg.nodegraph.nodes[remaining_conn.inputids],remaining_conn.inwindows)
+outspecs = map(dg.nodegraph.nodes[remaining_conn.outputids],remaining_conn.outwindows) do outnode,outwindow
+  (;lw=outwindow,chunks=outnode.chunks,ismem=outnode.ismem)
+end
+
+mergedop = DAE.GMDWop(inputs,outspecs,op)
+
+lr = DAE.optimize_loopranges(mergedop,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
+outar = zeros(Float32,90,516)
+runner = DAE.LocalRunner(mergedop,lr,(outar,))
 
 
 
