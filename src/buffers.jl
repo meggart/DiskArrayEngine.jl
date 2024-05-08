@@ -133,7 +133,7 @@ end
 function get_bufferindices(r,outspecs)
     mywindowrange = mysub(outspecs,r)
     BufferIndex(map(outspecs.lw.windows.members,mywindowrange) do w,r
-        i = w[r]
+        i = inner_index(w,r)
         first(first(i)):last(last(i))
     end)
 end
@@ -183,7 +183,7 @@ function merge_outbuffer_collection(o1::OutputAggregator, o2::OutputAggregator,r
     OutputAggregator(o3,o1.bufsize,o1.repeats,o1.finalize)
 end
 
-buffer_mergefunc(red,_) = (buf1,buf2) -> merge_outbuffer_collection.(buf1,buf2,(red,))
+buffer_mergefunc(red,_) = (buf1,buf2) -> merge_outbuffer_collection.(buf1,buf2,red)
 
 function merge_all_outbuffers(outbuffers,red)
     @debug "Merging output buffers $(typeof(outbuffers))"
@@ -284,6 +284,7 @@ function put_buffer(r, bufnow, outarc, piddir)
         @show size(bufnow.a)
         @show inds2
         @show r2
+        @show fin
         broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
     end
     bufnow.nwritten[] = -1
@@ -298,7 +299,7 @@ end
 function put_buffer(_, bufnow, ::Nothing, _)
   @debug "Putting buffers"
   if mustwrite(bufnow)
-    fin = bufnow.fin
+    fin = bufnow.finalize
     res = broadcast(fin,bufnow.a)
     bufnow.nwritten[] = -1
     res

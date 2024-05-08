@@ -70,7 +70,6 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
         @debug "Merging buffers"
         procs = unique(Dagger.processor.(fetch.(r,raw=true)))
         @debug "Affected processors are $procs"
-        red = op.f.red
         buffers_used = collect(v for (k,v) in local_outbuffers.chunks if any(p->matches_proc(k,p),procs))
         @debug "Merging buffers from $(length(buffers_used)) workers."
         buffers_used = fetch.(buffers_used)

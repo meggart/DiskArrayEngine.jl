@@ -65,6 +65,7 @@ function create_userfunction(
     init = tupelize(init,outtypes,"init")
     finalize = tupelize(finalize,outtypes,"finalize")
     buftype = tupelize(buftype,outtypes,"buftype")
+    red = tupelize(red,outtypes,"reduction function")
     isa(dims,Int) && (dims = (dims,))
     !isa(filters,Tuple) && (filters = (filters,))
     m = is_mutating ? Mutating() : NonMutating()

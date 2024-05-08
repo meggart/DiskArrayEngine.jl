@@ -27,7 +27,7 @@ function merge_operations(::Type{<:DirectMerge},inconn,outconn,to_eliminate,dimm
     if inconn.f.f.m isa Mutating
     error("Can not stack mutating function")
     end
-    @assert inconn.f.red === nothing
+    @assert only(inconn.f.red) === nothing
     @assert inconn.f.f isa ElementFunction
     @assert outconn.f.f isa ElementFunction
     outmutating = outconn.f.f.m isa Mutating
@@ -154,9 +154,9 @@ function merge_operations(::Type{<:BlockMerge},inconn,outconn,to_eliminate,dimma
   newfunc = build_chain(chain1,chain2,dimmap,transfer)
   UserOp(
     newfunc,
-    outconn.f.red,
+    (inconn.f.red...,outconn.f.red...),
     (inconn.f.init...,outconn.f.init...),
-    outconn.f.finalize,
+    (inconn.f.finalize...,outconn.f.finalize...),
     (inconn.f.buftype...,outconn.f.buftype...),
     (inconn.f.outtype...,outconn.f.outtype...),
     inconn.f.allow_threads && outconn.f.allow_threads,

@@ -40,6 +40,10 @@ function showifthere(io,w,i;sep=true)
     print(io,w[i])
   end
 end
+function purify_window(lw::LoopWindows)
+  pw = purify_window.(lw.windows.members)
+  LoopWindows(ProductArray(pw),lw.lr)
+end
 
 struct InputArray{A,LW<:LoopWindows}
     a::A
