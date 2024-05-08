@@ -23,7 +23,7 @@ using DataStructures: OrderedSet
 g = zopen("https://s3.bgc-jena.mpg.de:9000/esdl-esdc-v2.1.1/esdc-8d-0.25deg-184x90x90-2.1.1.zarr")
 
 
-g = zopen("/home/fgans/data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/",fill_as_missing=true);
+g = zopen(joinpath(homedir(),"data/esdc-8d-0.25deg-256x128x128-3.0.2.zarr/"),fill_as_missing=true);
 a = g["air_temperature_2m"];
 t = g["time"]
 
@@ -89,30 +89,7 @@ DAE.eliminate_node(nodegraph, 2, nodemergestrategies[2], DAE.BlockMerge)
 
 
 
-# chain1 = DAE.BlockFunctionChain(inconn)
-# chain2 = DAE.BlockFunctionChain(outconn)
-# dimmap = DAE.create_loopdimmap(inconn,outconn,i_eliminate)
-# ifrom = findfirst(==(i_eliminate),inconn.outputids)
-# ito = findfirst(==(i_eliminate),outconn.inputids)
-# transfer = ifrom => ito
-
-# chain2.transfers
-# chain1.transfers
-# newfunc = DAE.build_chain(chain1,chain2,dimmap,transfer)
-# newop = DAE.UserOp(
-#   newfunc,
-#   outconn.f.red,
-#   (inconn.f.init...,outconn.f.init...),
-#   outconn.f.finalize,
-#   (inconn.f.buftype...,outconn.f.buftype...),
-#   (inconn.f.outtype...,outconn.f.outtype...),
-#   inconn.f.allow_threads && outconn.f.allow_threads,
-# )
-
-# using DiskArrayEngine: blockwindows_in, blockwindows_out
-
-
-p = graphplot(nodegraph,elabels=DAE.edgenames(nodegraph),ilabels=DAE.nodenames(nodegraph))
+#p = graphplot(nodegraph,elabels=DAE.edgenames(nodegraph),ilabels=DAE.nodenames(nodegraph))
 
 remaining_conn = only(nodegraph.connections)
 
@@ -121,6 +98,8 @@ inputs = InputArray.(nodegraph.nodes[remaining_conn.inputids],remaining_conn.inw
 outspecs = map(nodegraph.nodes[remaining_conn.outputids],remaining_conn.outwindows) do outnode,outwindow
   (;lw=outwindow,chunks=outnode.chunks,ismem=outnode.ismem)
 end
+
+op.finalize
 
 mergedop = DAE.GMDWop(inputs,outspecs,op)
 DiskArrays.haschunks(c::DAE.EmptyInput) = DiskArrays.Unchunked()
@@ -136,8 +115,10 @@ runner = DAE.LocalRunner(mergedop,lr,(outar,nothing));
 
 run(runner)
 
-1
+using Makie, CairoMakie
+heatmap(outar)
 
+outar
 
 
 
