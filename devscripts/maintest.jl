@@ -83,78 +83,60 @@ nodemergestrategies[2]
 
 
 
-nodegraph = dg.nodegraph
+nodegraph = deepcopy(dg.nodegraph)
 
-inconids = DAE.inconnections(nodegraph,i_eliminate)
-outconids = DAE.outconnections(nodegraph,i_eliminate)
-inconns = nodegraph.connections[inconids]
-outconns = nodegraph.connections[outconids]
-
-inconn = only(inconns)
-outconn = only(outconns)
-
-chain1 = DAE.BlockFunctionChain(inconn)
-chain2 = DAE.BlockFunctionChain(outconn)
-dimmap = DAE.create_loopdimmap(inconn,outconn,i_eliminate)
-ifrom = findfirst(==(i_eliminate),inconn.outputids)
-ito = findfirst(==(i_eliminate),outconn.inputids)
-transfer = ifrom => ito
-
-chain2.transfers
-chain1.transfers
-newfunc = DAE.build_chain(chain1,chain2,dimmap,transfer)
-newop = DAE.UserOp(
-  newfunc,
-  outconn.f.red,
-  (inconn.f.init...,outconn.f.init...),
-  outconn.f.finalize,
-  (inconn.f.buftype...,outconn.f.buftype...),
-  (inconn.f.outtype...,outconn.f.outtype...),
-  inconn.f.allow_threads && outconn.f.allow_threads,
-)
-
-using DiskArrayEngine: blockwindows_in, blockwindows_out
-
-inconninwindows,inconnoutwindows = blockwindows_in(inconn,nodemergestrategies,i_eliminate)
-
-outconninwindows,outconnoutwindows = blockwindows_out(outconn,nodemergestrategies,i_eliminate)
-outconninwindows = DAE.replace_dimids.(outconninwindows,(dimmap,))
-outconnoutwindows = DAE.replace_dimids.(outconnoutwindows,(dimmap,))
-
-outinputids = deepcopy(outconn.inputids)
-newinputids = [inconn.inputids;outinputids]
-newoutputids = [inconn.outputids;outconn.outputids]
-
-newinwindows = (inconninwindows...,outconninwindows...)
-newoutwindows = (inconnoutwindows..., outconnoutwindows...)
-
-newoutwindows = DAE.replace_dimids.(newoutwindows,(dimmap,))
-
-newconn = DAE.MwopConnection(newinputids,newoutputids,newop,newinwindows,newoutwindows)
-
-nodegraph.nodes[i_eliminate] = (chunks=nothing,ismem=true,tempnode=true)
-
-deleteat!(nodegraph.connections,[inconids;outconids])
-push!(nodegraph.connections,newconn)
+DAE.eliminate_node(nodegraph, 2, nodemergestrategies[2], DAE.BlockMerge)
 
 
 
-remaining_conn = only(dg.nodegraph.connections)
+# chain1 = DAE.BlockFunctionChain(inconn)
+# chain2 = DAE.BlockFunctionChain(outconn)
+# dimmap = DAE.create_loopdimmap(inconn,outconn,i_eliminate)
+# ifrom = findfirst(==(i_eliminate),inconn.outputids)
+# ito = findfirst(==(i_eliminate),outconn.inputids)
+# transfer = ifrom => ito
+
+# chain2.transfers
+# chain1.transfers
+# newfunc = DAE.build_chain(chain1,chain2,dimmap,transfer)
+# newop = DAE.UserOp(
+#   newfunc,
+#   outconn.f.red,
+#   (inconn.f.init...,outconn.f.init...),
+#   outconn.f.finalize,
+#   (inconn.f.buftype...,outconn.f.buftype...),
+#   (inconn.f.outtype...,outconn.f.outtype...),
+#   inconn.f.allow_threads && outconn.f.allow_threads,
+# )
+
+# using DiskArrayEngine: blockwindows_in, blockwindows_out
+
+
+p = graphplot(nodegraph,elabels=DAE.edgenames(nodegraph),ilabels=DAE.nodenames(nodegraph))
+
+remaining_conn = only(nodegraph.connections)
 
 op = remaining_conn.f
-inputs = InputArray.(dg.nodegraph.nodes[remaining_conn.inputids],remaining_conn.inwindows)
-outspecs = map(dg.nodegraph.nodes[remaining_conn.outputids],remaining_conn.outwindows) do outnode,outwindow
+inputs = InputArray.(nodegraph.nodes[remaining_conn.inputids],remaining_conn.inwindows)
+outspecs = map(nodegraph.nodes[remaining_conn.outputids],remaining_conn.outwindows) do outnode,outwindow
   (;lw=outwindow,chunks=outnode.chunks,ismem=outnode.ismem)
 end
 
 mergedop = DAE.GMDWop(inputs,outspecs,op)
+DiskArrays.haschunks(c::DAE.EmptyInput) = DiskArrays.Unchunked()
+DiskArrays.eachchunk(c::DAE.EmptyInput) = DiskArrays.GridChunks(map(DAE.UndefinedChunks,c.s))
+DiskArrays.element_size(c::DAE.EmptyInput{T}) where T = sizeof(Base.nonmissingtype(T))
 
-lr = DAE.optimize_loopranges(mergedop,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
+lr = DAE.optimize_loopranges(mergedop,5e8,tol_low=0.2,tol_high=0.05,max_order=2);
+lr
+
 outar = zeros(Float32,90,516)
-runner = DAE.LocalRunner(mergedop,lr,(outar,))
 
+runner = DAE.LocalRunner(mergedop,lr,(outar,nothing));
 
+run(runner)
 
+1
 
 
 

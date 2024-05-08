@@ -3,9 +3,11 @@ import OptimizationMOI, OptimizationOptimJL
 using DiskArrays: DiskArrays, eachchunk, arraysize_from_chunksize
 using Statistics: mean
 using StatsBase: mode
-struct UndefinedChunks 
+struct UndefinedChunks <: DiskArrays.ChunkType
   s::Int
 end
+Base.size(c::UndefinedChunks) = (1,)
+Base.getindex(c::UndefinedChunks,_::Int) = UnitRange(0,-1)
 DiskArrays.arraysize_from_chunksize(cs::UndefinedChunks)=cs.s
 
 struct ExecutionPlan{N,P}
@@ -131,6 +133,7 @@ end
 
 
 access_per_chunk(cs,window) = cs/window
+access_per_chunk(::Nothing,_) = 1.0
 function integrated_readtime(_,cs::UndefinedChunks,singleread,window)
   cs.s/window*singleread    
 end
@@ -206,13 +209,7 @@ function get_chunkspec(outspec,ot)
       csnow
     end
   end
-  app_cs = map(cs,avgs) do csnow,avgsnow
-    if csnow isa UndefinedChunks 
-      nothing
-    else
-      ceil(Int,DiskArrays.approx_chunksize(csnow) / avgsnow)
-    end
-  end
+  app_cs = map(get_app_cs,cs,avgs) 
   sr = estimate_singleread(outspec)
   lw = outspec.lw
   windowfac = avgs
@@ -222,14 +219,16 @@ function get_chunkspec(outspec,ot)
   (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset,repfac)
 end
 
-function get_chunkspec(ia::InputArray)
+get_app_cs(cs,avgs) = ceil(Int,DiskArrays.approx_chunksize(cs) / avgs)
+get_app_cs(::UndefinedChunks,_) = nothing
+function get_chunkspec(ia::InputArray,totsize)
   cs = DiskArrays.eachchunk(ia.a).chunks
   avgs = avg_step.(ia.lw.windows.members)
-  app_cs = ceil.(Int,DiskArrays.approx_chunksize.(cs) ./ avgs)
+  app_cs = get_app_cs.(cs,avgs)
   sr = estimate_singleread(ia)
   lw = ia.lw
   windowfac = avgs
-  repfac = array_repeat_factor(lw,arraysize_from_chunksize.(cs))
+  repfac = array_repeat_factor(lw,totsize)
   windowoffset = max_size.(ia.lw.windows.members)
   elsize = DiskArrays.element_size(ia.a)
   (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset,repfac)
@@ -273,7 +272,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   ub = [max_cache,op.windowsize...]
   x0 = [2.0 for _ in op.windowsize]
   totsize = op.windowsize
-  input_chunkspecs = get_chunkspec.(op.inars)
+  input_chunkspecs = get_chunkspec.(op.inars,(totsize,))
   output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
   chunkspecs = (input_chunkspecs..., output_chunkspecs...)
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)

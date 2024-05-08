@@ -11,16 +11,19 @@ function is_output_chunk_overlap(spec,outar,idim,lr)
         looprange = lr.members[idim]
         length(looprange) == 1 && return false
         !all(looprange) do r
-            w1 = first(windows[first(r)])
-            w2 = last(windows[last(r)])
-            cr = DiskArrays.findchunk(cs,w1:w2)
+            # w1 = first(windows[first(r)])
+            # w2 = last(windows[last(r)])
+            w1 = inner_index(windows,first(r))
+            w2 = inner_index(windows,first(r))
+            cr = DiskArrays.findchunk(cs,first(w1):last(w2))
             #check if start and end are on a chunk boundary
-            first(cs[first(cr)])==w1 && last(cs[last(cr)])==w2
+            first(cs[first(cr)])==first(ii) && last(cs[last(cr)])==last(ii)
         end
     else
         false
     end
 end
+is_output_chunk_overlap(spec,::Nothing,idim,lr) = false
 function is_output_reducedim(spec,outar,idim)
     li = getloopinds(spec)
     if in(idim,li)

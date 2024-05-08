@@ -6,7 +6,8 @@ struct MwopConnection
     inwindows
     outwindows
 end
-describe(c::MwopConnection,_) = string(c.f.f.f)
+describe(c::MwopConnection,x) = describe(c.f.f,x)
+describe(f::Union{BlockFunction,ElementFunction},_) = string(f.f)
 struct MwopOutNode
     ismem
     chunks
@@ -20,6 +21,7 @@ describe(i::InputArray,j) = describe(i.a,j)
 describe(z::ZArray,_) = Zarr.zname(z)
 describe(z::Array{<:Any,0},_) = z[]
 describe(z,i) = "Input $i"
+EmptyInput(n::MwopOutNode) = EmptyInput{n.eltype,length(n.size)}(n.size)
 
 mutable struct MwopGraph <: AbstractGraph{Int}
     dims::UnitRange{Int}
@@ -240,8 +242,7 @@ function find_matches(t1,t2)
   matches
 end
 
-
-function eliminate_node(nodegraph,i_eliminate,mergestrategy)
+function eliminate_node(nodegraph,i_eliminate,strategies,appliedstrat)
     inconids = inconnections(nodegraph,i_eliminate)
     outconids = outconnections(nodegraph,i_eliminate)
     inconns = nodegraph.connections[inconids]
@@ -250,18 +251,13 @@ function eliminate_node(nodegraph,i_eliminate,mergestrategy)
     inconn = only(inconns)
     outconn = only(outconns)
 
-    newop = merge_operations(mergestrategy,inconn,outconn,i_eliminate)
+    dimmap = create_loopdimmap(inconn,outconn,i_eliminate)
 
-    newinputids = [inconn.inputids;filter(!=(i_eliminate),outconn.inputids)]
-    inwindows2 = deepcopy(outconn.inwindows)
+    newop = merge_operations(appliedstrat,inconn,outconn,i_eliminate, dimmap)
 
-    dimidmap = create_loopdimmap(inconn,outconn,i_eliminate)
-    i_keep = findall(!=(i_eliminate),outconn.inputids)
-    addinwindows = replace_dimids.(inwindows2[i_keep],(dimidmap,))
-    newinwindows = (inconn.inwindows...,addinwindows...)
-    newoutwindows = replace_dimids.(outconn.outwindows,(dimidmap,))
-    newconn = MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
+    newconn = merged_connection(appliedstrat, nodegraph, inconn,outconn,i_eliminate, newop, strategies, dimmap)
 
     deleteat!(nodegraph.connections,[inconids;outconids])
     push!(nodegraph.connections,newconn)
 end
+

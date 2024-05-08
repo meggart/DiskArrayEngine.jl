@@ -23,16 +23,16 @@ getloopinds(b::ArrayBuffer) = getloopinds(b.lw)
 
 "Determine the needed buffer size for a given Input array and loop ranges lr"
 function getbufsize(ia, lr)
-    map(mysub(ia,lr.members),ia.lw.windows.members) do cr,op
-        maximum(c->internal_size(op[c]),cr)
-    end
+    map(windowbuffersize,mysub(ia,lr.members),ia.lw.windows.members)
 end
+windowbuffersize(looprange, window) = maximum(c->internal_size(inner_index(window,c)),looprange)
 
 "Creates buffers for input arrays"
 function generate_inbuffers(inars,loopranges)
     map(inars) do ia
         et = eltype(ia.a)
         #@show loopranges
+
         Array{et}(undef,getbufsize(ia,loopranges))
     end
 end
@@ -107,14 +107,27 @@ end
 offset_from_range(r) = first(r) .- 1
 offset_from_range(r::BufferIndex) = offset_from_range.(r.indranges)
 
+"""
+    struct EmptyInput
+
+A kind of placeholder array generating an artificial input in the DAG graph, which
+only gets filled during the computation. Mainly used to reserve an input buffer.  
+"""
+struct EmptyInput{T,N}
+    s::NTuple{N,Int}
+end
+Base.eltype(::EmptyInput{T}) where T = T
+Base.ndims(::EmptyInput{<:Any,N}) where N = N
+
+
 "Reads data from input array `ia` along domain `r` into `buffer`"
 function read_range(r,ia,buffer)
     fill!(buffer,zero(eltype(buffer)))
     inds = get_bufferindices(r,ia)
-    if !isnothing(ia.a)
+    if !isa(ia.a,EmptyInput)
         buffer[Base.OneTo.(length.(inds.indranges))...] = ia.a[inds.indranges...]
     end
-    ArrayBuffer(buffer,offset_from_range(inds),ia.lw)
+    ArrayBuffer(buffer,offset_from_range(inds),purify_window(ia.lw))
 end
 
 function get_bufferindices(r,outspecs)
@@ -195,7 +208,7 @@ end
 function generate_outbuffer_collection(ia,buftype,loopranges,finalize) 
     nd = getsubndims(ia)
     bufsize = getbufsize(ia,loopranges)
-    d = Dict{BufferIndex{nd},OutArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(ia.lw),typeof(finalize)}}()
+    d = Dict{BufferIndex{nd},OutArrayBuffer{Array{buftype,nd},NTuple{nd,Int},typeof(purify_window(ia.lw)),typeof(finalize)}}()
     reps = precompute_bufferrepeat(loopranges,ia)
     OutputAggregator(d,bufsize,reps,finalize)
 end
@@ -216,12 +229,13 @@ end
 
 "Extracts or creates output buffer as an ArrayBuffer"
 function extract_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
+    @show typeof(r)
     inds = get_bufferindices(r,outspecs)
     offsets = offset_from_range(inds)
     b = get!(buffer.buffers,inds) do 
         buf = generate_raw_outbuffer(init,buftype,buffer.bufsize)
         ntot = buffer.repeats[inds]
-        buf = OutArrayBuffer(buf,offsets,outspecs.lw,buffer.finalize,Ref(0),ntot)
+        buf = OutArrayBuffer(buf,offsets,purify_window(outspecs.lw),buffer.finalize,Ref(0),ntot)
     end
     b.nwritten[] = b.nwritten[]+1 
     b
@@ -266,6 +280,10 @@ function put_buffer(r, bufnow, outarc, piddir)
         @debug "$(myid()) Writing data without piddir to $inds2"
         @debug "$outar"
         @debug "$(bufnow.a) $r2"
+        @show size(outar)
+        @show size(bufnow.a)
+        @show inds2
+        @show r2
         broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
     end
     bufnow.nwritten[] = -1

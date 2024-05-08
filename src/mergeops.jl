@@ -19,7 +19,7 @@ struct BlockMerge
 end
 
 
-function merge_operations(::DirectMerge,inconn,outconn,to_eliminate)
+function merge_operations(::Type{<:DirectMerge},inconn,outconn,to_eliminate,dimmap)
     is_multioutput1 = length(inconn.outputids) > 1
     if is_multioutput1
         error("Not implemented")
@@ -144,29 +144,45 @@ function possible_breaks(dg,inode)
   return BlockMerge(breakvals)
 end
 
+function merge_operations(::Type{<:BlockMerge},inconn,outconn,to_eliminate,dimmap)
+  chain1 = BlockFunctionChain(inconn)
+  chain2 = BlockFunctionChain(outconn)
+  ifrom = findfirst(==(to_eliminate),inconn.outputids)
+  ito = findfirst(==(to_eliminate),outconn.inputids)
+  transfer = ifrom => ito
+
+  newfunc = build_chain(chain1,chain2,dimmap,transfer)
+  UserOp(
+    newfunc,
+    outconn.f.red,
+    (inconn.f.init...,outconn.f.init...),
+    outconn.f.finalize,
+    (inconn.f.buftype...,outconn.f.buftype...),
+    (inconn.f.outtype...,outconn.f.outtype...),
+    inconn.f.allow_threads && outconn.f.allow_threads,
+  )
+end
 
 struct BlockFunctionChain
   funcs
   args
-  isel
   transfers::Vector{Pair{Int,Int}} # List of pairs containing the indices of outbuffer-inbuffer pairs to copy data
 end
 #Constructor to build a length-1 chain
 function BlockFunctionChain(f::Union{ElementFunction,BlockFunction},info)
-  nin,nout,nlw = info
+  nin,nout = info
   funcs = [f]
-  args = [ntuple(identity,nin),ntuple(identity,nout)]
-  isel = [ntuple(identity,nlw)]
+  args = [(ntuple(identity,nin),ntuple(identity,nout))]
   transfers = []
-  BlockFunctionChain(funcs,args,isel,transfers)
+  BlockFunctionChain(funcs,args,transfers)
 end
 BlockFunctionChain(op::UserOp,info) = BlockFunctionChain(op.f,info)
 BlockFunctionChain(c::BlockFunctionChain,_,_,_) = c
+describe(c::BlockFunctionChain) = join(map(f->f.f.f),c.funcs)
 function build_chain(c1::BlockFunctionChain, c2::BlockFunctionChain, dimmap, transfer)
   argspre = maximum(i->maximum.(i),c1.args)
-  args = [c1.args;map(i->i.+argspre,c2.args)]
+  args = [c1.args;map(i->map(j->j.+argspre,i),c2.args)]
   funcs = [c1.funcs;c2.funcs]
-  isel = [c1.isel;map(i->dimmap.(i),c2.isel)]
   inargspre = first(argspre)
   outargspre = last(argspre)
   transfers = copy(c1.transfers)
@@ -174,7 +190,7 @@ function build_chain(c1::BlockFunctionChain, c2::BlockFunctionChain, dimmap, tra
     push!(transfers,(first(t)+outargspre) => (last(t)+inargspre))
   end
   push!(transfers,(first(transfer)+outargspre) => (last(transfer)+inargspre))
-  BlockFunctionChain(funcs,args,isel,transfers)
+  BlockFunctionChain(funcs,args,transfers)
 end
 maxlr(lw::LoopWindows) = maximum(getloopinds(lw),init=0)
 function BlockFunctionChain(conn::MwopConnection)
@@ -182,28 +198,43 @@ function BlockFunctionChain(conn::MwopConnection)
   BlockFunctionChain(conn.f,(length(conn.inwindows),length(conn.outwindows),nlr))
 end
 
-struct NestedWindow{T,P<:AbstractVector{T}} <: AbstractVector{T}
+struct NestedWindow{P<:AbstractVector} <: AbstractVector{UnitRange{Int}}
   parent::P
   groups::Vector{UnitRange{Int}}
 end
 Base.size(w::NestedWindow) = (length(w.groups),)
 Base.getindex(w::NestedWindow, i::Int) = w.groups[i]
-inner_index(g::NestedWindow) = (g.parent[ip] for j in i for ip in g.groups[j])
-
-
+inner_index(g::NestedWindow, i) = collect(g.parent[ip] for j in i for ip in g.groups[j])
+inner_range(g::NestedWindow, i) = first(g.groups[first(i)]):last(g.groups[last(i)])
+inner_range(g::Window, i) = inner_range(g.w,i)
+inner_getindex(w::NestedWindow, i::Int) = w.parent[i]
+purify_window(w::NestedWindow) = NestedWindow(purify_window(w.parent),w.groups)
 
 function run_block(f::BlockFunctionChain,inow,inbuffers_wrapped,outbuffers_now,threaded)
   
   func1 = first(f.funcs)
   args1 = first(f.args)
-  isel1 = first(f.isel)
   inbuffers1 = map(Base.Fix1(getindex,inbuffers_wrapped),first(args1))
   outbuffers1 = map(Base.Fix1(getindex,outbuffers_now),last(args1))
-  inow1 = map(Base.Fix1(getindex,inow),isel1)
 
-  run_block(func1,inow1,inbuffers1,outbuffers1,threaded)
+  ref_inow = inow
 
-  @assert length(f.funcs) == length(f.args) == length(f.isel) == length(f.transfers)+1
+
+  for buffer in inbuffers1
+    foreach(buffer.lw.windows.members,getloopinds(buffer)) do window,li
+      if isa(window,NestedWindow) || (isa(window,Window) && isa(window.w,NestedWindow))
+        inow = Base.setindex(inow,inner_range(window,inow[li]),li)
+      end
+    end
+  end
+
+  @show ref_inow
+  @show inow
+  @show typeof(inbuffers1[1].lw.windows)
+
+  run_block(func1,inow,inbuffers1,outbuffers1,threaded)
+
+  @assert length(f.funcs) == length(f.args) == length(f.transfers)+1
 
   for i in 2:length(f.funcs)
     transfer = f.transfers[i-1]
@@ -217,10 +248,11 @@ function run_block(f::BlockFunctionChain,inow,inbuffers_wrapped,outbuffers_now,t
     args = f.args[i]
     inbuffers = map(Base.Fix1(getindex,inbuffers_wrapped),first(args))
     outbuffers = map(Base.Fix1(getindex,outbuffers_now),last(args))
+    inow = ref_inow
     for buffer in inbuffers
       foreach(buffer.lw.windows.members,getloopinds(buffer)) do window,li
-        if window isa NestedWindow
-          inow = Base.setindex(inow,collect(inner_index(window,inow[li])),li)
+        if isa(window,NestedWindow) || (isa(window,Window) && isa(window.w,NestedWindow))
+          inow = Base.setindex(inow,inner_range(window,inow[li]),li)
         end
       end
     end
@@ -241,20 +273,18 @@ function get_groups(windows, strategies)
   end))
 end
 
-function blockwindows_in(inconn,nodemergestrategies,i_eliminate)
+function blockwindows_in(inconn,strategies,i_eliminate)
   outnodetorep = findfirst(==(i_eliminate),inconn.outputids)
   outwindows = inconn.outwindows[outnodetorep]
-  strategies = nodemergestrategies[i_eliminate]
   groups = get_groups(outwindows,strategies)
   newinwindows = _blockwindows.(inconn.inwindows,(groups,))
   newoutwindows = _blockwindows.(inconn.outwindows,(groups,))
   newinwindows, newoutwindows
 end
 
-function blockwindows_out(outconn,nodemergestrategies,i_eliminate)
+function blockwindows_out(outconn,strategies,i_eliminate)
   nodetorep = findfirst(==(i_eliminate),outconn.inputids)
   windows = outconn.inwindows[nodetorep]
-  strategies = nodemergestrategies[i_eliminate]
   groups = get_groups(windows,strategies)
   newinwindows = _blockwindows.(outconn.inwindows,(groups,))
   newoutwindows = _blockwindows.(outconn.outwindows,(groups,))
@@ -265,7 +295,7 @@ function _blockwindows(windows,groups)
   #Now fix the corresponding input windows
   newwindows = map(windows.windows.members,getloopinds(windows)) do w,il
     if haskey(groups,il)
-      NestedWindow(w,groups[il])
+      to_window(NestedWindow(w,groups[il]))
     else
       w
     end
@@ -283,5 +313,39 @@ function blockmerge_groups(parent, mergestrat::BlockMerge)
     i1 = inext + 1
   end
   groups
+end
+
+function merged_connection(::Type{DirectMerge}, _, inconn,outconn,i_eliminate, newop, strategy, dimidmap)
+
+  newinputids = [inconn.inputids;filter(!=(i_eliminate),outconn.inputids)]
+  inwindows2 = deepcopy(outconn.inwindows)
+
+  i_keep = findall(!=(i_eliminate),outconn.inputids)
+  addinwindows = replace_dimids.(inwindows2[i_keep],(dimidmap,))
+  newinwindows = (inconn.inwindows...,addinwindows...)
+  newoutwindows = replace_dimids.(outconn.outwindows,(dimidmap,))
+  MwopConnection(newinputids,outconn.outputids,newop,newinwindows,newoutwindows)
+end
+
+function merged_connection(::Type{BlockMerge}, nodegraph, inconn,outconn,i_eliminate, newop, strategy, dimmap)
+
+  inconninwindows,inconnoutwindows = blockwindows_in(inconn,strategy,i_eliminate)
+  outconninwindows,outconnoutwindows = blockwindows_out(outconn,strategy,i_eliminate)
+  
+  outconninwindows = replace_dimids.(outconninwindows,(dimmap,))
+  outconnoutwindows = replace_dimids.(outconnoutwindows,(dimmap,))
+  
+  outinputids = deepcopy(outconn.inputids)
+  ito = findfirst(==(i_eliminate),outinputids)
+  outinputids[ito] = length(nodegraph.nodes)+1
+  newinputids = [inconn.inputids;outinputids]
+  newoutputids = [inconn.outputids;outconn.outputids]
+  
+  newinwindows = (inconninwindows...,outconninwindows...)
+  newoutwindows = (inconnoutwindows..., outconnoutwindows...)
+  
+  push!(nodegraph.nodes,EmptyInput(nodegraph.nodes[i_eliminate]))
+
+  MwopConnection(newinputids,newoutputids,newop,newinwindows,newoutwindows)
 end
 

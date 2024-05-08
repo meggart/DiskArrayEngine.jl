@@ -31,6 +31,14 @@ Base.getindex(w::Window,i) = w.w[i]
 get_ordering(w::Window) = w.ordering
 get_overlap(w::Window) = w.overlap
 get_sparsity(w::Window) = w.sparsity
+inner_index(w::Window, i) = inner_index(w.w, i)
+inner_index(w, i) = w[i]
+purify_window(w) = w
+purify_window(w::Window) = w.w
+function purify_window(lw::LoopWindows)
+    pw = purify_window.(lw.windows.members)
+    LoopWindows(ProductArray(pw),lw.lr)
+end
 
 function compute_ordering(r)
     exts = extrema.(r)
