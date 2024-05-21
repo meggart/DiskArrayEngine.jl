@@ -145,7 +145,6 @@ end
         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
         outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-        println("outer inow: $inow")
         put_buffer.((inow,),outbuffers_now,outars,nothing)
         clean_aggregator.(outbuffers)
         update_progress!(progress)

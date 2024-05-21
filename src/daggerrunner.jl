@@ -59,7 +59,7 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
             outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
             run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
             @debug myid(), "Finished running block ", inow
-            put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
+            put_buffer.((inow,),outbuffers_now, outars, (piddir,))
             clean_aggregator.(outbuffers)
             true
         end

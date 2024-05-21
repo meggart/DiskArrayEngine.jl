@@ -228,9 +228,6 @@ function run_block(f::BlockFunctionChain,inow,inbuffers_wrapped,outbuffers_now,t
     end
   end
 
-  @show ref_inow
-  @show inow
-  @show typeof(inbuffers1[1].lw.windows)
 
   run_block(func1,inow,inbuffers1,outbuffers1,threaded)
 

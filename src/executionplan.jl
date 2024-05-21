@@ -267,10 +267,10 @@ max_size(lw) = maximum(length,lw)
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0
 
-function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2)
+function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2,x0 = nothing)
   lb = [0.0,map(_->1.0,op.windowsize)...]
   ub = [max_cache,op.windowsize...]
-  x0 = [2.0 for _ in op.windowsize]
+  x0 = x0 === nothing ? [2.0 for _ in op.windowsize] : x0
   totsize = op.windowsize
   input_chunkspecs = get_chunkspec.(op.inars,(totsize,))
   output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
@@ -278,6 +278,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
+  @show sol.u
   @debug "Optimized Loop sizes: ", sol.u
   lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order)
   ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),totsize,sol.objective,lr)

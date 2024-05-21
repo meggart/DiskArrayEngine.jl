@@ -200,7 +200,7 @@ function flush_all_outbuffers(outbuffers,outars,piddir)
         for k in allkeys
             put_buffer(k,coll.buffers[k], outar, piddir)
         end
-        clean_buffer(coll)
+        clean_aggregator(coll)
     end
     outbuffers
 end
@@ -229,7 +229,6 @@ end
 
 "Extracts or creates output buffer as an ArrayBuffer"
 function extract_outbuffer(r,outspecs,init,buftype,buffer::OutputAggregator)
-    @show typeof(r)
     inds = get_bufferindices(r,outspecs)
     offsets = offset_from_range(inds)
     b = get!(buffer.buffers,inds) do 
@@ -280,11 +279,6 @@ function put_buffer(r, bufnow, outarc, piddir)
         @debug "$(myid()) Writing data without piddir to $inds2"
         @debug "$outar"
         @debug "$(bufnow.a) $r2"
-        @show size(outar)
-        @show size(bufnow.a)
-        @show inds2
-        @show r2
-        @show fin
         broadcast!(fin,view(outar,inds2...),bufnow.a[r2...])
     end
     bufnow.nwritten[] = -1
