@@ -168,7 +168,8 @@ function remove_aliases!(g::MwopGraph)
 end
 
 
-function to_graph!(g, op::GMDWop, aliases=Dict())
+function to_graph!(g, res::GMWOPResult, aliases=Dict())
+    op = res.op
     output_ids = map(enumerate(op.outspecs), op.f.outtype) do (iout, outspec), et
         if iout in keys(aliases)
             aliases[iout]
@@ -182,7 +183,7 @@ function to_graph!(g, op::GMDWop, aliases=Dict())
             i = getioutspec(r)
             outspec = getoutspec(r)
             id = add_node!(g, outspec, eltype(inar.a))
-            to_graph!(g, r.op, Dict(i => id))
+            to_graph!(g, r, Dict(i => id))
             id
         else
             add_node!(g, inar)
@@ -193,6 +194,7 @@ function to_graph!(g, op::GMDWop, aliases=Dict())
     push!(g.connections, MwopConnection(collect(input_ids), output_ids, op.f, inwindows, outwindows))
     g.dims = 1:length(op.windowsize)
     g
+    output_ids[getioutspec(res)]
 end
 
 
@@ -252,6 +254,8 @@ function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
     outconn = only(outconns)
 
     dimmap = create_loopdimmap(inconn, outconn, i_eliminate)
+
+    @show dimmap
 
     newop = merge_operations(appliedstrat, inconn, outconn, i_eliminate, dimmap)
 

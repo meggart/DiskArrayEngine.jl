@@ -19,7 +19,7 @@ using Distributed
 using LoggingExtras
 using Test
 using DataStructures: OrderedSet
-1
+
 g = zopen("https://s3.bgc-jena.mpg.de:9000/esdl-esdc-v2.1.1/esdc-8d-0.25deg-184x90x90-2.1.1.zarr")
 
 
@@ -30,7 +30,7 @@ t = g["time"]
 tvec = timedecode(t[:], t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-r = aggregate_diskarray(a, mean, (1 => nothing, 2 => 8, 3 => groups), strategy=:direct)
+r = aggregate_diskarray(a, mean, (1 => nothing, 2 => 8, 3 => groups), strategy=:reduce)
 
 #a = compute(r)
 
@@ -43,14 +43,59 @@ finalres = r2 .+ r3
 finalres[45, 100]
 
 g = DAE.MwopGraph()
-DAE.to_graph!(g, finalres.op);
+outnode = DAE.to_graph!(g, r2);
 DAE.remove_aliases!(g)
 using CairoMakie, GraphMakie
 #p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
 
+dg = DAE.DimensionGraph(g)
+dg.concomps
+
+
 DAE.fuse_step_direct!(g)
 
+
+
+gold = deepcopy(g)
+
+
+gold.connections[1].inputids
+gold.connections[1].outputids
+gold.connections[1].inwindows[1]
+gold.connections[1].outwindows[1]
+
+gold.connections[2].inwindows[1]
+gold.connections[2].inwindows[3]
+gold.connections[2].outwindows[1]
+
+
+DAE.fuse_step_block!(g)
+
 remaining_conn = only(g.connections)
+
+
+remaining_conn.inputids
+remaining_conn.outputids
+
+remaining_conn.inwindows[1]
+remaining_conn.inwindows[2]
+remaining_conn.inwindows[3]
+remaining_conn.inwindows[4]
+
+remaining_conn.outwindows[1]
+remaining_conn.outwindows[2]
+
+
+
+g.nodes[7]
+
+p = graphplot(g, ilabels=DAE.nodenames(g))
+
+remaining_conn = only(g.connections)
+
+remaining_conn.inputids
+remaining_conn.outputids
+remaining_conn.outwindows[1]
 
 
 op = remaining_conn.f
@@ -61,27 +106,33 @@ end
 
 mergedop = DAE.GMDWop(inputs, outspecs, op)
 
+rnow = DAE.results_as_diskarrays(mergedop)[2]
+
+
+rnow[45, 100]
+
+
+
+
+using Logging
+mylogger = EarlyFilteredLogger(SimpleLogger(Logging.Debug)) do log
+  (log._module == DiskArrayEngine && log.level >= Logging.Debug) || log.level >= Logging.Info
+end
+global_logger(mylogger)
+
 lr = DAE.optimize_loopranges(mergedop, 5e8, tol_low=0.2, tol_high=0.05, max_order=2);
 lr
 
-outar = zeros(Float32, 90, 516)
+outar = zeros(Union{Missing,Float32}, 90, 516)
 
-runner = DAE.LocalRunner(mergedop, lr, (outar, nothing));
+runner = DAE.LocalRunner(mergedop, lr, (nothing, outar));
 
 run(runner)
 
-outar
+outar[45, 100]
 
 using Makie, CairoMakie
 heatmap(outar)
-
-outar
-
-
-
-
-
-
 
 
 

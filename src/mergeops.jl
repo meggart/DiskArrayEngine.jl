@@ -155,7 +155,7 @@ function merge_operations(::Type{<:BlockMerge}, inconn, outconn, to_eliminate, d
   chain1 = BlockFunctionChain(inconn)
   chain2 = BlockFunctionChain(outconn)
   ifrom = findfirst(==(to_eliminate), inconn.outputids)
-  ito = findfirst(==(to_eliminate), outconn.inputids)
+  ito = findall(==(to_eliminate), outconn.inputids)
   transfer = ifrom => ito
 
   newfunc = build_chain(chain1, chain2, dimmap, transfer)
@@ -173,14 +173,14 @@ end
 struct BlockFunctionChain
   funcs
   args
-  transfers::Vector{Pair{Int,Int}} # List of pairs containing the indices of outbuffer-inbuffer pairs to copy data
+  transfers::Vector{Pair{Int,Vector{Int}}} # List of pairs containing the indices of outbuffer-inbuffer pairs to copy data
 end
 #Constructor to build a length-1 chain
 function BlockFunctionChain(f::Union{ElementFunction,BlockFunction}, info)
   nin, nout = info
   funcs = [f]
   args = [(ntuple(identity, nin), ntuple(identity, nout))]
-  transfers = []
+  transfers = Pair{Int,Vector{Int}}[]
   BlockFunctionChain(funcs, args, transfers)
 end
 BlockFunctionChain(op::UserOp, info) = BlockFunctionChain(op.f, info)
@@ -196,9 +196,9 @@ function build_chain(c1::BlockFunctionChain, c2::BlockFunctionChain, dimmap, tra
   funcs = [c1.funcs; c2.funcs]
   transfers = copy(c1.transfers)
   for t in c2.transfers
-    push!(transfers, (first(t) + argspreout) => (last(t) + argsprein))
+    push!(transfers, (first(t) + argspreout) => (last(t) .+ argsprein))
   end
-  push!(transfers, (first(transfer) + argspreout) => (last(transfer) + argsprein))
+  push!(transfers, first(transfer) => (last(transfer) .+ argsprein))
   BlockFunctionChain(funcs, args, transfers)
 end
 maxlr(lw::LoopWindows) = maximum(getloopinds(lw), init=0)
@@ -221,39 +221,46 @@ purify_window(w::NestedWindow) = NestedWindow(purify_window(w.parent), w.groups)
 
 function run_block(f::BlockFunctionChain, inow, inbuffers_wrapped, outbuffers_now, threaded)
 
-  func1 = first(f.funcs)
-  args1 = first(f.args)
-  inbuffers1 = map(Base.Fix1(getindex, inbuffers_wrapped), first(args1))
-  outbuffers1 = map(Base.Fix1(getindex, outbuffers_now), last(args1))
+  func = first(f.funcs)
+  args = first(f.args)
+  inbuffers = map(Base.Fix1(getindex, inbuffers_wrapped), first(args))
+  outbuffers = map(Base.Fix1(getindex, outbuffers_now), last(args))
 
   ref_inow = inow
 
-
-  for buffer in inbuffers1
+  for buffer in (inbuffers...,outbuffers...)
     foreach(buffer.lw.windows.members, getloopinds(buffer)) do window, li
       if isa(window, NestedWindow) || (isa(window, Window) && isa(window.w, NestedWindow))
-        inow = Base.setindex(inow, inner_range(window, inow[li]), li)
+        inow = Base.setindex(inow, inner_range(window, ref_inow[li]), li)
       end
     end
   end
 
 
-  run_block(func1, inow, inbuffers1, outbuffers1, threaded)
+  run_block(func, inow, inbuffers, outbuffers, threaded)
 
   @assert length(f.funcs) == length(f.args) == length(f.transfers) + 1
 
   for i in 2:length(f.funcs)
-    transfer = f.transfers[i-1]
-    for t in transfer
-      ob = outbuffers_now[first(t)]
-      ib = inbuffers_wrapped[last(t)]
-      broadcast!(ob.finalize, ib.a, ob.a)
+    t = f.transfers[i-1]
+    ifrom = first(t)
+    itos = last(t)
+    ob = outbuffers_now[ifrom]
+    for ito in itos
+      ib = inbuffers_wrapped[ito]
+      if size(ib.a) != size(ob.a)
+        broadcast!(ob.finalize, view(ib.a,Base.OneTo.(size(ob.a))...), ob.a)
+      else
+        broadcast!(ob.finalize, ib.a, ob.a)
+      end
     end
 
     func = f.funcs[i]
     args = f.args[i]
     inbuffers = map(Base.Fix1(getindex, inbuffers_wrapped), first(args))
     outbuffers = map(Base.Fix1(getindex, outbuffers_now), last(args))
+
+
     inow = ref_inow
     for buffer in inbuffers
       foreach(buffer.lw.windows.members, getloopinds(buffer)) do window, li
@@ -262,6 +269,7 @@ function run_block(f::BlockFunctionChain, inow, inbuffers_wrapped, outbuffers_no
         end
       end
     end
+
     run_block(func, inow, inbuffers, outbuffers, threaded)
 
   end

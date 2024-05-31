@@ -35,7 +35,7 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
       i1 = findfirst(a->maximum(a)>=first(ri),w)
       i2 = findlast(a->minimum(a)<=last(ri),w)
       s = Base.setindex(s,i1:i2,li)
-    end
+  end
     outars = Base.setindex(outars,OffsetArray(aout,r...),getioutspec(res))
     l = length.(s)
     lres = mysub(outspec.lw,s)
