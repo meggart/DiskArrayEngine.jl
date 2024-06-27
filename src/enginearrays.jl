@@ -21,8 +21,8 @@ function engine(p::AbstractEngineArray;bcdims=nothing)
     end
 end
 Base.parent(p::EngineArray) = p.parent
-DiskArrays.readblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.readblock!(a.parent,xout,r...)
-DiskArrays.writeblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.writeblock!(a.parent,xout,r...)
+DiskArrays.readblock!(a::EngineArray,xout,r::OrdinalRange...) = a.parent isa AbstractDiskArray ? DiskArrays.readblock!(a.parent,xout,r...) : xout .= a.parent[r...]
+DiskArrays.writeblock!(a::EngineArray,xout,r::OrdinalRange...) = a.parent isa AbstractDiskArray ? DiskArrays.writeblock!(a.parent,xout,r...) : a.parent[r...] = xout
 Base.size(a::EngineArray) = size(a.parent)
 DiskArrays.eachchunk(a::EngineArray) = DiskArrays.eachchunk(a.parent)
 bcdims(a::EngineArray) = a.bcdims[]
@@ -36,7 +36,7 @@ function collect_bcdims(A)
         end
     end
     oc = collect(o)
-    allunique(first.(oc)) || error("Lengths don't match")
+    allunique(last.(oc)) || error("Lengths don't match")
     sort!(oc,by=last)
     first.(oc), last.(oc)
 end
