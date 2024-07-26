@@ -255,8 +255,6 @@ function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
 
     dimmap = create_loopdimmap(inconn, outconn, i_eliminate)
 
-    @show dimmap
-
     newop = merge_operations(appliedstrat, inconn, outconn, i_eliminate, dimmap)
 
     newconn = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
