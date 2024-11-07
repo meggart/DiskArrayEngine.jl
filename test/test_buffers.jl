@@ -13,21 +13,23 @@
 
   buftype = Int32
   init = Int32(0)
-  obc = generate_outbuffer_collection(outspecs,buftype,lr)
+  obc = generate_outbuffer_collection(outspecs,buftype,lr, identity)
   bufview1 = extract_outbuffer(lr[1,1,1],outspecs,init,buftype,obc)
   @test length(obc.buffers) == 1
   k1 = DiskArrayEngine.BufferIndex((1:1,1:2))
   @test haskey(obc.buffers,k1)
-  n,ntot,b = obc.buffers[k1]
-  @test n[] == 1
-  @test ntot == 6
+  b = obc.buffers[k1]
+  @test b.nwritten[] == 1
+  @test b.ntot == 6
   @test b isa DiskArrayEngine.ArrayBuffer
   @test DiskArrayEngine.getloopinds(b) == (1,3)
   @test b.offsets == (0,0)
   @test b.a == zeros(Int32,2,2)
   @test bufview1 === b
   bufview2 = extract_outbuffer(lr[2,1,1],outspecs,init,buftype,obc)
-  n,ntot,b2 = obc.buffers[k1]
+  b2 = obc.buffers[k1]
+  n = b2.nwritten
+  ntot = b2.ntot
   @test n[] == 2
   @test ntot == 6
   @test b2 === b
@@ -39,7 +41,7 @@
   @test put_buffer(lr[1,1,1], identity, bufview1, obc, outar, nothing) == false
   @test put_buffer(lr[2,1,1], identity, bufview1, obc, outar, nothing) == false
   n[] = 6
-  @test put_buffer(lr[2,3,1], identity, bufview1, obc, outar, nothing) == true
+  @test put_buffer(lr[2,3,1], identity, bufview1, obc, nothing, outar) == true
   obc.buffers
   @test length(obc.buffers) == 0
   @test outar[1,:] == [1,1,0,0]
@@ -47,7 +49,9 @@
 
   bufview2 = extract_outbuffer(lr[3,1,1],outspecs,init,buftype,obc)
   k2 = DiskArrayEngine.BufferIndex((2:3,1:2))
-  n,ntot,b = obc.buffers[k2]
+  b = obc.buffers[k2]
+  n = b.nwritten
+  ntot = b.ntot
   @test n[]==1
   @test ntot==3
   b.a .= 2
