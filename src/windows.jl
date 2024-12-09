@@ -96,8 +96,13 @@ function compute_sparsity(r)
     end
 end
 
-function to_window(r)
-    eltype(r) <: Int || eltype(r) <: AbstractUnitRange{Int} || throw(ArgumentError("Windows must contain Ints or UnitRanges as elements"))
+function to_window(r::AbstractVector{<:AbstractVector{Int}})
+    #We have unordered windows
+    sparsity = compute_sparsity(r)
+    Window(r,Unordered(),Overlapping(),sparsity)
+end
+
+function to_window(r::Union{AbstractVector{Int},AbstractVector{<:AbstractUnitRange}})
     ordering = compute_ordering(r)
     overlap = compute_overlap(r,ordering)
     sparsity = compute_sparsity(r)

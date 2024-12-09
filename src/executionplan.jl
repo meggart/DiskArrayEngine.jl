@@ -181,7 +181,7 @@ end
 actual_chunk_access(cs::UndefinedChunks,looprange,window) = 1.0
 
 
-function integrated_readtime(app_cs,cs,singleread,window) 
+function integrated_readtime(app_cs,cs,singleread,window)
   acp = access_per_chunk(app_cs,window)
   readtime = if acp < 1.0
     #length(cs)*singleread*(1-0.5*window/maximum(last(cs)))
@@ -221,17 +221,36 @@ end
 
 get_app_cs(cs,avgs) = ceil(Int,DiskArrays.approx_chunksize(cs) / avgs)
 get_app_cs(::UndefinedChunks,_) = nothing
+
+"""
+  DefaultChunkSpec
+
+Default way to describe dependency between a window size and the number of chunk accesses to read the whole 
+dimension. Used for contigouus windows over contiguous chunks of data
+"""
+struct DefaultChunkSpec{CS}
+  cs::CS
+  app_cs::Int
+  sr::Float64
+  windowfac::Float64
+  windowoffset::Int
+end
+function dimension_chunkspec(cs,window::AbstractVector{<:Union{Int,AbstractUnitRange}})
+  avgs = avg_step(window)
+  app_cs = get_app_cs(cs,avgs)
+  windowfac = avgs
+  windowoffset = max_size(window)
+  DefaultChunkSpec(cs,app_cs,windowfac,windowoffset)
+end
+
 function get_chunkspec(ia::InputArray,totsize)
   cs = DiskArrays.eachchunk(ia.a).chunks
-  avgs = avg_step.(ia.lw.windows.members)
-  app_cs = get_app_cs.(cs,avgs)
+  wmembers = ia.lw.windows.members
+  dimspecs = dimension_chunkspec(cs,wmembers)
   sr = estimate_singleread(ia)
-  lw = ia.lw
-  windowfac = avgs
-  repfac = array_repeat_factor(lw,totsize)
-  windowoffset = max_size.(ia.lw.windows.members)
+  repfac = array_repeat_factor(ia.lw,totsize)
   elsize = DiskArrays.element_size(ia.a)
-  (;cs,app_cs,sr,lw,elsize,windowfac,windowoffset,repfac)
+  (;dimspecs,sr,repfac,elsize,ia.lw)
 end
 function array_repeat_factor(lw,totsize)
   mytot = mysub(lw,totsize)

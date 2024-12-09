@@ -76,6 +76,9 @@ function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
         end
         create_outwindows(length.(ow),dimsmap = dimmap, windows=(ow...,),ismem=ismem,chunks=outchunks)
     else
+        if outchunks === nothing
+            outchunks = ntuple(_->nothing,length(outwindows))
+        end
         create_outwindows(length.(outwindows),windows=outwindows,ismem=ismem,chunks=outchunks)
     end
     return GMDWop(tuple(inars),tuple(outspecs),agg.f)
