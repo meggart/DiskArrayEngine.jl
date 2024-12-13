@@ -122,7 +122,7 @@ function run_group(sch, groupspecs,args...)
         loopdims = freeloopdims(sch)
         if !isempty(loopdims)
             loopsub = CartesianIndices((map(d->1:length(sch.loopranges.members[d]),loopdims)...,))
-            @debug "Free lopp dimensions available, splitting loop into $(length(loopsub)) subgroups"
+            @debug "Free loop dimensions available, splitting loop into $(length(loopsub)) subgroups"
             schedule(sch,sch.runner,loopdims,loopsub,groupspecs,args...)
         else 
             @debug "Groups are available for split"
@@ -140,7 +140,7 @@ function run_group(sch, groupspecs,args...)
     end
 end
 
-function Base.run(runner::LocalRunner)
+function Base.run(runner::Union{LocalRunner,PMapRunner})
     groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
     run_group(sch,nothing)

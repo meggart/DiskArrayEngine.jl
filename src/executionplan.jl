@@ -264,8 +264,8 @@ avg_step(lw,::Union{Increasing,Decreasing},::Any) = length(lw) > 1 ? mean(diff(f
 avg_step(lw,::Any,::Any) = error("Not implemented")
 max_size(lw) = maximum(length,lw)
 
-estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-8 : 1.0
-estimate_singleread(ia) = ia.ismem ? 1e-8 : 3.0
+estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-16 : 1.0
+estimate_singleread(ia) = ia.ismem ? 1e-16 : 3.0
 
 function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2,x0 = nothing)
   lb = [0.0,map(_->1.0,op.windowsize)...]

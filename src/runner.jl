@@ -151,69 +151,54 @@ end
     end
 end
 
+using Distributed
 
-struct DistributedRunner{OP,LR,OA,IB,OB}
-    op::OP
-    loopranges::LR
-    outars::OA
-    threaded::Bool
-    inbuffers_pure::IB
-    outbuffers::OB
-    workers::CachingPool
+struct PMapRunner
+    op
+    loopranges
+    outars
+    threaded
+    inbuffers_pure
+    outbuffers
+    progress_channel
 end
-function DistributedRunner(op,loopranges,outars;threaded=true,w = workers())
-    inars = op.inars
-    makeinbuf = ()->begin
-        generate_inbuffers(inars, loopranges)
+function PMapRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
+    all(isnothing,op.f.red) || error("PMapRunner can not be used for reductions. Use DaggerRunner instead")
+    loopranges = plan_to_loopranges(exec_plan)
+    inbuffers_pure = generate_inbuffers(op.inars, loopranges)
+    outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
+    progress_channel = if showprogress
+        progress = Progress(length(loopranges))
+        channel = Distributed.RemoteChannel(()->Channel{Bool}(), 1)
+        @async while take!(channel)
+            next!(progress)
+        end
+        channel
     end
-    outspecs = op.outspecs
-    f = op.f
-    makeoutbuf = ()->begin
-        generate_outbuffers(outspecs,f, loopranges)
-    end
-    allinbuffers = makeinbuf
-    alloutbuffers = makeoutbuf
-
-    DistributedRunner(op,loopranges,outars, threaded, allinbuffers,alloutbuffers,CachingPool(w))
+    PMapRunner(op,plan_to_loopranges(loopranges),outars, threaded, inbuffers_pure,outbuffers,progress_channel)
 end
 
+update_progress!(pm::RemoteChannel) = put!(pm, true)
 
-# function DiskArrayEngine.run_loop(runner::DistributedRunner,loopranges = runner.loopranges;groupspecs=nothing)
-#     if groupspecs !== nothing && :output_chunk in groupspecs
-#         piddir = @spawn tempname()
-#     else
-#         piddir = nothing
-#     end
-#     cpool = runner.workers
-#     op = runner.op
-#     threaded = runner.threaded
-#     pmap(cpool,loopranges) do stored, inow
-#     #map(loopranges) do inow
-#         println("inow = ", inow)
-#         @debug "inow = ", inow
+finish_progress(::Any) = nothing
+finish_progress(pm::RemoteChannel) = put!(pm,false)
 
-#         inbuffers_pure,outbuffers = fetch(inbuf[myid()]),fetch(outbuf[myid()])
-#         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-        
-#         outbuffers_now = wrap_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
-#         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+function run_loop(runner::PMapRunner,loopranges = runner.loopranges;groupspecs=nothing)
+    run_loop(
+        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress_channel,loopranges;groupspecs
+    )
+end
 
-#         put_buffer.((inow,),op.f.finalize, outbuffers_now, outbuffers, outars, (piddir,))
-
-#     end
-#     if groupspecs !== nothing && :reducedim in groupspecs
-#         @debug "Merging buffers"
-#         collection_merged = foldl(values(runner.outbuffers)) do agg,buffers
-#             buf = fetch(buffers)
-#             merge_outbuffer_collection.(agg,buf)
-#         end
-#         @debug "Writing merged buffers"
-#         map(collection_merged) do outbuffer
-#             for (k,v) in outbuffer.buffers
-#                 @debug "Writing index $k"
-#                 put_buffer.((k,),runner.op.f.finalize, v, outbuffer, runner.outars, (piddir,))
-#             end
-#         end
-#     end
-# end
+@noinline function run_loop(::PMapRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges;groupspecs=nothing)
+    pmap(CachingPool(workers()),loopranges) do inow
+        @debug "inow = ", inow
+        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
+        outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
+        put_buffer.((inow,),outbuffers_now,outars,nothing)
+        clean_aggregator.(outbuffers)
+        update_progress!(progress)
+    end
+    finish_progress(progress)
+end
 

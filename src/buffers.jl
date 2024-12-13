@@ -127,8 +127,8 @@ function read_range(r, ia, buffer)
     fill!(buffer, zero(eltype(buffer)))
     inds = get_bufferindices(r, ia)
     if !isa(ia.a, EmptyInput)
-        @show r
-        @show inds.indranges
+        # @show r
+        # @show inds.indranges
         buffer[Base.OneTo.(length.(inds.indranges))...] = ia.a[inds.indranges...]
     end
     ArrayBuffer(buffer, offset_from_range(inds), purify_window(ia.lw))
