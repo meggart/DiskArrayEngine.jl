@@ -121,34 +121,56 @@ struct LocalRunner
     inbuffers_pure
     outbuffers
     progress
+    restarter
 end
-function LocalRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
+function LocalRunner(op,exec_plan,
+    outars=create_outars(op,exec_plan);
+    threaded=true,
+    showprogress=true,
+    restartfile=nothing,
+    restartmode=:continue,
+    )
     loopranges = plan_to_loopranges(exec_plan)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
     outbuffers = generate_outbuffers(op.outspecs,op.f, loopranges)
     pm = showprogress ? Progress(length(loopranges)) : nothing
-    LocalRunner(op,plan_to_loopranges(loopranges),outars, threaded, inbuffers_pure,outbuffers,pm)
+    loopranges = plan_to_loopranges(exec_plan)
+    restarter = create_restarter(restartfile,loopranges,restartmode)
+    LocalRunner(op,loopranges,outars, threaded, inbuffers_pure,outbuffers,pm,restarter)
 end
 
 update_progress!(::Nothing) = nothing
 update_progress!(pm) = next!(pm)
+need_run(inow,restarter::Restarter) = need_run(inow,restarter.remaining_loopranges)
+need_run(inow,::Nothing) = true
+need_run(inow,remaining_loopranges) = inow in remaining_loopranges
+
 
 function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=nothing)
     run_loop(
-        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress,loopranges;groupspecs
+        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress,loopranges, runner.restarter;groupspecs
     )
 end
 
-@noinline function run_loop(::LocalRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges;groupspecs=nothing)
-    for inow in loopranges
-        @debug "inow = ", inow
+function default_loopbody(inow, re, op, inbuffers_pure, outbuffers, threaded,outars, progress)
+    @debug "inow = ", inow
+    if need_run(inow,re)
         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
         outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
         put_buffer.((inow,),outbuffers_now,outars,nothing)
         clean_aggregator.(outbuffers)
         update_progress!(progress)
+        update_restarter(re, inow)
     end
+end
+
+@noinline function run_loop(::LocalRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges,re;groupspecs=nothing)
+    for inow in loopranges
+        default_loopbody(inow, re, op, inbuffers_pure, outbuffers, threaded,outars, progress)
+    end
+    finish_progress(progress)
+    finish_restarter(re)
 end
 
 using Distributed
@@ -161,8 +183,9 @@ struct PMapRunner
     inbuffers_pure
     outbuffers
     progress_channel
+    restarter
 end
-function PMapRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true)
+function PMapRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=true,showprogress=true,restartfile=nothing,restartmode=:continue)  
     all(isnothing,op.f.red) || error("PMapRunner can not be used for reductions. Use DaggerRunner instead")
     loopranges = plan_to_loopranges(exec_plan)
     inbuffers_pure = generate_inbuffers(op.inars, loopranges)
@@ -174,30 +197,42 @@ function PMapRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=tru
             next!(progress)
         end
         channel
+    else
+        nothing
     end
-    PMapRunner(op,plan_to_loopranges(loopranges),outars, threaded, inbuffers_pure,outbuffers,progress_channel)
+    restarter = create_restarter(restartfile,loopranges,restartmode)
+    restart_channel = if isnothing(restarter)
+        nothing
+    else
+        nd = ndims(restarter)
+        channel = Distributed.RemoteChannel(()->Channel{Union{Nothing,NTuple{nd,Int}}}(), 1)
+        @async while true
+            update = take!(channel)
+            isnothing(update) && break
+            add_entry(restarter,update)
+        end
+    end
+    PMapRunner(op,loopranges, outars, threaded, inbuffers_pure,outbuffers,progress_channel,restart_channel)
 end
 
 update_progress!(pm::RemoteChannel) = put!(pm, true)
-
+update_restarter(re::RemoteChannel,i) = put!(re, i)
+update_restarter(::Nothing,i) = nothing
+update_restarter(re::Restarter,i) = add_entry(re,i)
 finish_progress(::Any) = nothing
 finish_progress(pm::RemoteChannel) = put!(pm,false)
+finish_restarter(::Any) = nothing
+finish_restarter(re::RemoteChannel) = put!(re,nothing)
 
 function run_loop(runner::PMapRunner,loopranges = runner.loopranges;groupspecs=nothing)
     run_loop(
-        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress_channel,loopranges;groupspecs
+        runner,runner.op, runner.inbuffers_pure,runner.outbuffers,runner.threaded,runner.outars,runner.progress_channel,runner.restarter,loopranges;groupspecs
     )
 end
 
-@noinline function run_loop(::PMapRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,loopranges;groupspecs=nothing)
+@noinline function run_loop(::PMapRunner,op,inbuffers_pure,outbuffers,threaded,outars,progress,restarter,loopranges;groupspecs=nothing)
     pmap(CachingPool(workers()),loopranges) do inow
-        @debug "inow = ", inow
-        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-        outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
-        run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-        put_buffer.((inow,),outbuffers_now,outars,nothing)
-        clean_aggregator.(outbuffers)
-        update_progress!(progress)
+        default_loopbody(inow, restarter, op, inbuffers_pure, outbuffers, threaded,outars, progress)
     end
     finish_progress(progress)
 end

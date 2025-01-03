@@ -278,7 +278,6 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
-  @show sol.u
   @debug "Optimized Loop sizes: ", sol.u
   lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order)
   ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),totsize,sol.objective,lr)
@@ -316,7 +315,7 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
   end
   if length(intsizes) > 1
     #Simply try with less input arrays, to at least align a few of them, this could be further optimized
-    return find_adjust_candidates(optires,smax,Base.tail(intsizes);reltol_low, reltol_high,max_order)
+    return find_adjust_candidates(optires,smax,Base.front(intsizes);reltol_low, reltol_high,max_order)
   end
   cand = round(Int,optires)//1
   is_possible_candidate(cand,smax,optires,reltol_low,reltol_high) && return cand

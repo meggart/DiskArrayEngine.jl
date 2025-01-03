@@ -11,13 +11,11 @@ function is_output_chunk_overlap(spec,outar,idim,lr)
         looprange = lr.members[idim]
         length(looprange) == 1 && return false
         !all(looprange) do r
-            # w1 = first(windows[first(r)])
-            # w2 = last(windows[last(r)])
             w1 = inner_index(windows,first(r))
-            w2 = inner_index(windows,first(r))
+            w2 = inner_index(windows,last(r))
             cr = DiskArrays.findchunk(cs,first(w1):last(w2))
             #check if start and end are on a chunk boundary
-            first(cs[first(cr)])==first(ii) && last(cs[last(cr)])==last(ii)
+            first(cs[first(cr)])==first(w1) && last(cs[last(cr)])==last(w2)
         end
     else
         false
@@ -40,6 +38,7 @@ function split_dim_reasons(op,lr,outars)
     for (spec,ar) in zip(op.outspecs,outars)
         foreach(1:ndims(lr)) do idim
             if is_output_chunk_overlap(spec,ar,idim,lr)
+                @warn "Overlapping output chunks in dimension $idim"
                 push!(ret[idim],:output_chunk)
             end
             if is_output_reducedim(spec,ar,idim)
@@ -53,7 +52,7 @@ reason_priority = Dict(
 :foldl => 1, 
 :reducedim => 2,
 :output_chunk => 3, 
-:overlapinputs =>4,
+:overlapinputs => 4,
 )
 
 function get_procgroups(op, lr,outars)
