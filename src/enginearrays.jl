@@ -29,23 +29,46 @@ bcdims(a::EngineArray) = a.bcdims[]
 bcdims(p) = ntuple(identity,ndims(p))
 
 function collect_bcdims(A)
-    o = Set{Tuple{Int,Int}}()
+    o = Dict{Int,Int}()
     for a in A
         for (i,d) in enumerate(bcdims(a))
-            push!(o,(size(a,i),d))
+            newsize = size(a,i)
+            if haskey(o,d)
+                oldsize = o[d]
+                mergedsize = if newsize == oldsize
+                    newsize
+                elseif newsize == 1
+                    oldsize
+                elseif odlsize == 1
+                    newsize
+                else
+                    error("Dimension length do not match $newsize and $oldsize")
+                end
+                o[d] = mergedsize
+            else
+                o[d] = size(a,i)
+            end
         end
     end
-    oc = collect(o)
-    allunique(first.(oc)) || error("Lengths don't match")
-    sort!(oc,by=last)
-    first.(oc), last.(oc)
+    oc = collect(pairs(o))
+    sort!(oc,by=first)
+    last.(oc), first.(oc)
 end
 
 function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing, fin = identity)
     s, bcd = collect_bcdims(A)
     nd = maximum(bcd)
     ia = map(A) do ar
-        InputArray(unengine,dimsmap = bcdims(ar))
+        lw = map(bcdims(ar),size(ar)) do idim, sa
+            sloop = s[idim]
+            if sa == sloop
+                1:sa
+            else
+                @assert sa == 1
+                fill(1,sloop)
+            end
+        end
+        InputArray(unengine,windows = lw, dimsmap = bcdims(ar))
     end
     # tf = Base.promote_op(f,Base.nonmissingtype.(eltype.(A))...)
     # top = Base.promote_op(op,tf,tf)
@@ -58,10 +81,16 @@ function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing
     if dims === Colon()
         dims = ntuple(identity,nd)
     end
-    outdims = setdiff(ntuple(identity,nd),dims)
-    outsize = (s[outdims]...,)
+    windows = map(ntuple(identity,nd)) do idim
+        if idim in dims
+            Repeated(s[idim])
+        else
+            1:s[idim]
+        end
+    end
+    outsize = length.(windows)
     # outar = zeros(top,outsize)
-    outwindows = (create_outwindows(outsize,dimsmap=(outdims...,)),)
+    outwindows = (create_outwindows(outsize,windows = windows),)
     op = GMDWop(ia, outwindows, func)
     first(results_as_diskarrays(op))
 end
@@ -84,17 +113,17 @@ for (f,red,i) in (
     (:(Base.minimum),:min,:init_min),
     (:(Base.extrema),:extrred,:init_ex),
     (:(Base.sum),:(+),:init_sum),
-)
+    )
     eval(quote
-        $f(a::AbstractEngineArray;dims=:,skipmissing=false) = $f(identity,a;dims,skipmissing)
-        function $f(ff::Base.Callable,a::AbstractEngineArray;dims=:,skipmissing=false)
-            red = skipmissing ? missred($red) : $red
-            init = skipmissing ? missing : $i
-            mapreduce(ff,red,a;dims,init=$(i)(a))
-        end 
-
-
-    end)
+    $f(a::AbstractEngineArray;dims=:,skipmissing=false) = $f(identity,a;dims,skipmissing)
+    function $f(ff::Base.Callable,a::AbstractEngineArray;dims=:,skipmissing=false)
+        red = skipmissing ? missred($red) : $red
+        init = skipmissing ? missing : $i
+        mapreduce(ff,red,a;dims,init=$(i)(a))
+    end 
+    
+    
+end)
 end
 
 Base.mapslices(f,A::AbstractEngineArray...;dims,outchunks=nothing) = mapslices_engine(f,A;dims,outchunks)
@@ -102,17 +131,20 @@ Base.mapslices(f,A::AbstractEngineArray...;dims,outchunks=nothing) = mapslices_e
 function mapslices_engine(f,A...;dims,outchunks=nothing)
     s, bcd = collect_bcdims(A)
     nd = maximum(bcd)
-    ia = ntuple(length(A)) do ii
-        ar = A[ii]
-        ms = size(ar)
-        windows = Base.OneTo.(ms)
-        for d in dims
-            idim = findfirst(==(d),bcdims(ar))
-            if idim !== nothing
-                windows = Base.setindex(windows,(windows[idim],),idim)
+    ia = map(A) do ar
+        lw = map(bcdims(ar),size(ar)) do idim, sa
+            @show idim, sa, s
+            sloop = s[idim]
+            if idim in dims    
+                [1:sa]
+            elseif sa == sloop
+                1:sa
+            else
+                @assert sa == 1
+                Repeated(1,sloop)
             end
         end
-        InputArray(unengine(ar),dimsmap = bcdims(ar),windows=windows)
+        InputArray(unengine(ar),windows = lw, dimsmap = bcdims(ar))
     end
     inputtypes = map(ia) do inar
         if isempty(inar.lw.windows.members)
@@ -122,7 +154,7 @@ function mapslices_engine(f,A...;dims,outchunks=nothing)
             ndi > 0 ? Array{eltype(inar.a),ndi} : eltype(inar.a)
         end
     end
-
+    
     tf = get_infered_types(f,inputtypes)
     func = create_userfunction(f,tf,buftype=tf)
     outdims = ntuple(identity,nd)
