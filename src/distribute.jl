@@ -3,23 +3,31 @@ function is_output_chunk_overlap(spec,outar,idim,lr)
     if idim in li
         ii = findfirst(==(idim),li)
         windows = spec.lw.windows.members[ii]
-        isa(get_overlap(windows),NonOverlapping) || return false
-        loopind = li[ii]
+        isa(get_overlap(windows),NonOverlapping) || return true
         cs = eachchunk(outar).chunks[ii]
-        chunkbounds = cumsum(length.(cs))
         windows = spec.lw.windows.members[ii]
         looprange = lr.members[idim]
         length(looprange) == 1 && return false
-        !all(looprange) do r
-            w1 = inner_index(windows,first(r))
-            w2 = inner_index(windows,last(r))
-            cr = DiskArrays.findchunk(cs,first(w1):last(w2))
-            #check if start and end are on a chunk boundary
-            first(cs[first(cr)])==first(w1) && last(cs[last(cr)])==last(w2)
+        if has_multiaccess(cs, looprange, windows)
+            return true
         end
-    else
-        false
     end
+    return false
+end
+function has_multiaccess(cs, looprange, windows)
+    nhit = zeros(Int, length(cs))
+    for r in looprange
+        w1 = inner_index(windows,first(r))
+        w2 = inner_index(windows,last(r))
+        cr = DiskArrays.findchunk(cs,first(w1):last(w2))
+        for icr in cr
+            nhit[icr] += 1
+            if nhit[icr] > 1
+                return true
+            end
+        end
+    end
+    return false
 end
 is_output_chunk_overlap(spec,::Nothing,idim,lr) = false
 function is_output_reducedim(spec,outar,idim)
