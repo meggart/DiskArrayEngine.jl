@@ -23,7 +23,7 @@ struct DerivedOnlineStat{P,V,F} <: OnlineStats.OnlineStat{Number}
     fitfunc::F
 end
 DerivedOnlineStat{P,V,F}() where {P,V,F} = DerivedOnlineStat(P(),V,F)
-OnlineStats.fit!(s::DerivedOnlineStat,x) = s.fitfunc(s.parent,x)
+OnlineStats.fit!(s::DerivedOnlineStat,x::Number) = s.fitfunc(s.parent,x)
 OnlineStats.value(s::DerivedOnlineStat) = s.valuefunc(s.parent)
 OnlineStats.nobs(s::DerivedOnlineStat) = OnlineStats.nobs(s.parent)
 

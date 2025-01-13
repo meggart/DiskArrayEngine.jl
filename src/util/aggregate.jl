@@ -31,7 +31,7 @@ function windows_from_spec(::ReduceAggregator,windowsize::Int,sdim)
     1:sdim,[((i-1)÷windowsize)+1 for i in 1:sdim]
 end
 
-windows_from_spec(::ReduceAggregator,windowsize::Nothing,sdim) = 1:sdim,nothing
+windows_from_spec(::ReduceAggregator, windowsize::Nothing, sdim) = 1:sdim, fill(1, sdim)
 
 function windows_from_spec(::DirectAggregator,groups,sdim)
     groupid,n = rle(groups)
@@ -51,7 +51,7 @@ function windows_from_spec(::DirectAggregator,windowsize::Int,sdim)
     MovingWindow(1,windowsize,windowsize,ceil(Int,sdim/windowsize)),1:ceil(Int,sdim/windowsize)
 end
 
-windows_from_spec(::DirectAggregator,windowsize::Nothing,sdim) = [1:sdim],nothing
+windows_from_spec(::DirectAggregator, windowsize::Nothing, sdim) = [1:sdim], 1:1
 
 function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
     input_size = size(inar)
@@ -68,16 +68,7 @@ function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
     inwindows = first.(windows)
     outwindows = last.(windows)
     inars = InputArray(inar,windows=(inwindows...,))
-    outspecs = if any(isnothing,outwindows)
-        ow = filter(!isnothing,outwindows)
-        dimmap = findall(!isnothing,outwindows)
-        if outchunks === nothing
-            outchunks = ntuple(_->nothing,length(dimmap))
-        end
-        create_outwindows(length.(ow),dimsmap = dimmap, windows=(ow...,),ismem=ismem,chunks=outchunks)
-    else
-        create_outwindows(length.(outwindows),windows=outwindows,ismem=ismem,chunks=outchunks)
-    end
+    outspecs = create_outwindows(length.(outwindows), windows=outwindows, ismem=ismem, chunks=outchunks)
     return GMDWop(tuple(inars),tuple(outspecs),agg.f)
 end
 

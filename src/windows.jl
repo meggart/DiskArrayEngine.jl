@@ -121,3 +121,15 @@ get_ordering(r::AbstractRange{Int}) = step(r)>0 ? Increasing() : Decreasing()
 get_overlap(r::AbstractRange{Int}) = NonOverlapping()
 get_sparsity(r::AbstractRange{Int}) = abs(step(r)) > 2 ? Sparse(1/abs(step(r))) : Dense()
 to_window(r::AbstractRange{Int}) = r
+
+struct Repeated <: AbstractVector{Int}
+    val::Int
+    length::Int
+end
+Base.size(r::Repeated) = (r.length,)
+Base.IndexStyle(::Type{Repeated}) = Base.IndexLinear()
+Base.getindex(r::Repeated, ::Int) = r.val
+get_ordering(::Repeated) = Increasing()
+get_overlap(r::Repeated) = Repeating(Float64(r.length))
+get_sparsity(r::Repeated) = Dense()
+to_window(r::Repeated) = r
