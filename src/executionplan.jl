@@ -267,7 +267,7 @@ max_size(lw) = maximum(length,lw)
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-16 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-16 : 3.0
 
-function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2,x0 = nothing)
+function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2,x0 = nothing, force_regular=false)
   lb = [0.0,map(_->1.0,op.windowsize)...]
   ub = [max_cache,op.windowsize...]
   x0 = x0 === nothing ? [2.0 for _ in op.windowsize] : x0
@@ -279,7 +279,7 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
-  lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order)
+  lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order,force_regular)
   ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),totsize,sol.objective,lr)
 end
 
@@ -355,7 +355,7 @@ end
 
 
 
-function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_order=2)
+function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_order=2, force_regular=false)
   inars = filter(!ismem,optotal.inars)
   app_cs = apparent_chunksize.(inars)
   r = map(approx_opti,1:length(approx_opti),optotal.windowsize) do sol,iopt,si
@@ -380,9 +380,14 @@ function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_o
   adj_cands = first.(r)
   adj_chunks = last.(r)
   
+
   @debug "Adjust candidates: ", adj_cands
-  lr = generate_LoopRange.(adj_cands,adj_chunks,tres=3)
-  lr = DiskArrays.chunktype_from_chunksizes.(fix_output_overlap(optotal.outspecs,lr))
+  lr = if force_regular
+    DiskArrays.RegularChunks.(round.(Int,adj_cands),0,optotal.windowsize)
+  else
+    lr = generate_LoopRange.(adj_cands,adj_chunks,tres=3)
+    DiskArrays.chunktype_from_chunksizes.(fix_output_overlap(optotal.outspecs,lr))
+  end
   foreach(lr,optotal.windowsize) do l,s
     @assert first(first(l))>=1
     @assert last(last(l))<=s
