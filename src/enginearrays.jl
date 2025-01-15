@@ -39,7 +39,7 @@ function collect_bcdims(A)
                     newsize
                 elseif newsize == 1
                     oldsize
-                elseif odlsize == 1
+                elseif oldsize == 1
                     newsize
                 else
                     error("Dimension length do not match $newsize and $oldsize")

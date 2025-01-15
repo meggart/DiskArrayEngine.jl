@@ -25,7 +25,7 @@ windowmaximum(w) = maximum(maximum,w)
 last_contains_value(w::AbstractVector{<:Number},i) = findlast(<=(i),w)
 last_contains_value(w::AbstractRange,i) = searchsortedlast(w,i)
 function last_contains_value(w,i)
-    ii = findlast(r->maximum(r)<=i,w)
+    ii = findlast(r -> i in r, w)
     if ii === nothing
         length(w)+1
     else

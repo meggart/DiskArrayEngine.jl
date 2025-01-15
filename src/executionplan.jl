@@ -198,6 +198,8 @@ function get_chunkspec(outspec,ot)
   si = map(m->last(last(m))-first(first(m))+1,outspec.lw.windows.members)
   if cs isa GridChunks
     cs = cs.chunks
+  elseif cs === nothing
+    cs = map(_->nothing,si)
   end
   cs = map(cs,si) do csnow,s
     if csnow === nothing

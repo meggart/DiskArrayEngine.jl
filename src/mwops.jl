@@ -68,6 +68,9 @@ getsubndims(::LoopWindows{<:Any,IL}) where IL = length(IL)
 
 function create_outwindows(s;dimsmap = ntuple(identity,length(s)),windows = Base.OneTo.(s), chunks = map(_->nothing,s),ismem=false)
   outrp = ProductArray(to_window.(windows))
+  if sort(collect(dimsmap)) != 1:length(dimsmap)
+    throw(ArgumentError("Vanishing dimensions in outputs are not allowed. Please add length-1 dummy dimensions for every input axis."))
+  end
   (;lw=LoopWindows(outrp,Val((dimsmap...,))),chunks,ismem)
 end
 
@@ -89,8 +92,6 @@ function range_from_parentchunks(pc)
     end
     d
 end
-
-
 
 function getwindowsize(inars, outspecs)
     d = Dict{Int,Int}()
@@ -122,9 +123,14 @@ struct GMDWop{N,I,O,F<:UserOp,SPL}
     lspl::SPL
 end
 function GMDWop(inars, outspecs, f)
-    s = getwindowsize(inars, outspecs)
-    lspl = isa(f.f,BlockFunction) ? nothing : get_loopsplitter(length(s),outspecs)
-    GMDWop(inars,outspecs, f, s, lspl)
+  s = getwindowsize(inars, outspecs)
+  lspl = isa(f.f, BlockFunction) ? nothing : get_loopsplitter(length(s), outspecs)
+  nd = length(s)
+  foreach(outspecs) do spec
+    li = getloopinds(spec.lw)
+    sort(collect(li)) == 1:nd || throw(ArgumentError("Vanishing Dimensions are not allowed for output arrays."))
+  end
+  GMDWop(inars, outspecs, f, s, lspl)
 end
 
 function create_outars(op,plan;par_only=false)

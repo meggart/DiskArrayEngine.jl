@@ -145,7 +145,8 @@ function possible_breaks(inwindows, outwindows)
       push!(breakvals, first(endval_candidates_in))
       endval = endval + 1
     else
-      endval = max(maximum(endval_candidates_in), maximum(endval_candidates_out))
+      newendval = max(maximum(endval_candidates_in), maximum(endval_candidates_out))
+      endval = max(endval + 1, newendval)
     end
   end
   return BlockMerge(breakvals)
@@ -183,6 +184,7 @@ function BlockFunctionChain(f::Union{ElementFunction,BlockFunction}, info)
   transfers = Pair{Int,Vector{Int}}[]
   BlockFunctionChain(funcs, args, transfers)
 end
+BlockFunctionChain(f::BlockFunctionChain, _) = f
 BlockFunctionChain(op::UserOp, info) = BlockFunctionChain(op.f, info)
 BlockFunctionChain(c::BlockFunctionChain, _, _, _) = c
 describe(c::BlockFunctionChain) = join(map(f -> f.f.f), c.funcs)
@@ -207,17 +209,7 @@ function BlockFunctionChain(conn::MwopConnection)
   BlockFunctionChain(conn.f, (length(conn.inwindows), length(conn.outwindows), nlr))
 end
 
-struct NestedWindow{P<:AbstractVector} <: AbstractVector{UnitRange{Int}}
-  parent::P
-  groups::Vector{UnitRange{Int}}
-end
-Base.size(w::NestedWindow) = (length(w.groups),)
-Base.getindex(w::NestedWindow, i::Int) = w.groups[i]
-inner_index(g::NestedWindow, i) = collect(g.parent[ip] for j in i for ip in g.groups[j])
-inner_range(g::NestedWindow, i) = first(g.groups[first(i)]):last(g.groups[last(i)])
-inner_range(g::Window, i) = inner_range(g.w, i)
-inner_getindex(w::NestedWindow, i::Int) = w.parent[i]
-purify_window(w::NestedWindow) = NestedWindow(purify_window(w.parent), w.groups)
+
 
 function run_block(f::BlockFunctionChain, inow, inbuffers_wrapped, outbuffers_now, threaded)
 
@@ -287,19 +279,19 @@ function get_groups(windows, strategies)
   end))
 end
 
-function blockwindows_in(inconn, strategies, i_eliminate)
+function blockwindows_inconn(inconn, strategies, i_eliminate)
   outnodetorep = findfirst(==(i_eliminate), inconn.outputids)
   outwindows = inconn.outwindows[outnodetorep]
-  groups = get_groups(outwindows, strategies)
+  groups = get_groups(outwindows, strategies[i_eliminate])
   newinwindows = _blockwindows.(inconn.inwindows, (groups,))
   newoutwindows = _blockwindows.(inconn.outwindows, (groups,))
   newinwindows, newoutwindows
 end
 
-function blockwindows_out(outconn, strategies, i_eliminate)
+function blockwindows_outconn(outconn, strategies, i_eliminate)
   nodetorep = findfirst(==(i_eliminate), outconn.inputids)
   windows = outconn.inwindows[nodetorep]
-  groups = get_groups(windows, strategies)
+  groups = get_groups(windows, strategies[i_eliminate])
   newinwindows = _blockwindows.(outconn.inwindows, (groups,))
   newoutwindows = _blockwindows.(outconn.outwindows, (groups,))
   newinwindows, newoutwindows
@@ -309,7 +301,10 @@ function _blockwindows(windows, groups)
   #Now fix the corresponding input windows
   newwindows = map(windows.windows.members, getloopinds(windows)) do w, il
     if haskey(groups, il)
-      to_window(NestedWindow(w, groups[il]))
+      groupwindow = map(groups[il]) do g
+        WindowGroup(w, g)
+      end
+      to_window(groupwindow)
     else
       w
     end
@@ -320,9 +315,9 @@ end
 blockmerge_groups(parent, _) = nothing
 function blockmerge_groups(parent, mergestrat::BlockMerge)
   i1 = 1
-  groups = UnitRange{Int}[]
+  groups = UnitRange{Int64}[]
   for b in mergestrat.possible_breaks
-    inext = findlast(<=(b), parent)
+    inext = last_contains_value(parent, b)
     push!(groups, i1:inext)
     i1 = inext + 1
   end
@@ -338,13 +333,13 @@ function merged_connection(::Type{DirectMerge}, _, inconn, outconn, i_eliminate,
   addinwindows = replace_dimids.(inwindows2[i_keep], (dimidmap,))
   newinwindows = (inconn.inwindows..., addinwindows...)
   newoutwindows = replace_dimids.(outconn.outwindows, (dimidmap,))
-  MwopConnection(newinputids, outconn.outputids, newop, newinwindows, newoutwindows)
+  MwopConnection(newinputids, outconn.outputids, newop, newinwindows, newoutwindows), []
 end
 
 function merged_connection(::Type{BlockMerge}, nodegraph, inconn, outconn, i_eliminate, newop, strategy, dimmap)
 
-  inconninwindows, inconnoutwindows = blockwindows_in(inconn, strategy, i_eliminate)
-  outconninwindows, outconnoutwindows = blockwindows_out(outconn, strategy, i_eliminate)
+  inconninwindows, inconnoutwindows = blockwindows_inconn(inconn, strategy, i_eliminate)
+  outconninwindows, outconnoutwindows = blockwindows_outconn(outconn, strategy, i_eliminate)
 
   outconninwindows = replace_dimids.(outconninwindows, (dimmap,))
   outconnoutwindows = replace_dimids.(outconnoutwindows, (dimmap,))
@@ -358,8 +353,8 @@ function merged_connection(::Type{BlockMerge}, nodegraph, inconn, outconn, i_eli
   newinwindows = (inconninwindows..., outconninwindows...)
   newoutwindows = (inconnoutwindows..., outconnoutwindows...)
 
-  push!(nodegraph.nodes, EmptyInput(nodegraph.nodes[i_eliminate]))
-
-  MwopConnection(newinputids, newoutputids, newop, newinwindows, newoutwindows)
+  newconn = MwopConnection(newinputids, newoutputids, newop, newinwindows, newoutwindows)
+  newnode = EmptyInput(nodegraph.nodes[i_eliminate])
+  newconn, [newnode]
 end
 

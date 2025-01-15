@@ -22,6 +22,7 @@ describe(z::ZArray, _) = Zarr.zname(z)
 describe(z::Array{<:Any,0}, _) = z[]
 describe(z, i) = "Input $i"
 EmptyInput(n::MwopOutNode) = EmptyInput{n.eltype,length(n.size)}(n.size)
+Base.eltype(n::MwopOutNode) = n.eltype
 
 mutable struct MwopGraph <: AbstractGraph{Int}
     dims::UnitRange{Int}
@@ -257,7 +258,9 @@ function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
 
     newop = merge_operations(appliedstrat, inconn, outconn, i_eliminate, dimmap)
 
-    newconn = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
+    newconn, newnodes = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
+
+    append!(nodegraph.nodes, newnodes)
 
     deleteat!(nodegraph.connections, [inconids; outconids])
     push!(nodegraph.connections, newconn)
@@ -319,4 +322,10 @@ function fuse_graph!(g::MwopGraph)
     while length(g.connections) > 1
         fuse_step_block!(g::MwopGraph)
     end
+end
+
+function result_to_graph(res)
+    g = MwopGraph()
+    to_graph!(g, res)
+    g
 end

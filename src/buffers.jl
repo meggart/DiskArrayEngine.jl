@@ -31,8 +31,6 @@ windowbuffersize(looprange, window) = maximum(c -> internal_size(inner_index(win
 function generate_inbuffers(inars, loopranges)
     map(inars) do ia
         et = eltype(ia.a)
-        #@show loopranges
-
         Array{et}(undef, getbufsize(ia, loopranges))
     end
 end

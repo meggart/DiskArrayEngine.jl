@@ -2,23 +2,84 @@ using DiskArrayEngine
 import DiskArrayEngine as DAE
 using DiskArrays: ChunkType, RegularChunks
 using Statistics
-using Zarr, DiskArrays, OffsetArrays
-#using DiskArrayEngine: MWOp, internal_size, ProductArray, InputArray, getloopinds, UserOp, mysub, ArrayBuffer, NoFilter, AllMissing,
-#  create_buffers, read_range, generate_inbuffers, generate_outbuffers, get_bufferindices, offset_from_range, generate_outbuffer_collection, put_buffer, 
-#  Output, _view, Input, applyfilter, apply_function, LoopWindows, GMDWop, results_as_diskarrays, create_userfunction, steps_per_chunk, apparent_chunksize,
-#  find_adjust_candidates, generate_LoopRange, get_loopsplitter, split_loopranges_threads, merge_loopranges_threads, LocalRunner, 
-#  merge_outbuffer_collection, DistributedRunner
+using Zarr, DiskArrays
 using StatsBase: rle, mode
 using CFTime: timedecode
 using Dates
 using OnlineStats
 using Logging
 using Distributed
-#global_logger(SimpleLogger(stdout,Logging.Debug))
-#global_logger(SimpleLogger(stdout))
 using LoggingExtras
 using Test
 using DataStructures: OrderedSet
+
+
+
+
+inwindows1 = DAE.MovingWindow(1, 5, 5, 4)
+outwindows1 = 1:4
+inwindows2 = DAE.MovingWindow(1, 2, 2, 2)
+outwindows2 = 1:2
+
+inar = DAE.InputArray(1:20, windows=(inwindows1,))
+outspecs = (DAE.create_outwindows(4, windows=(outwindows1,)),)
+f = create_userfunction(sum, Float64)
+op1 = DAE.GMDWop((inar,), outspecs, f)
+r = results_as_diskarrays(op1)[1]
+
+inar2 = DAE.InputArray(r, windows=(inwindows2,))
+outspecs2 = (DAE.create_outwindows(4, windows=(outwindows2,)),)
+f2 = create_userfunction(sum, Float64)
+op2 = DAE.GMDWop((inar2,), outspecs2, f2)
+r2 = results_as_diskarrays(op2)[1]
+
+g = DAE.result_to_graph(r2)
+
+@test length(g.nodes) == 3
+@test g.nodes[1] == DAE.MwopOutNode(false, nothing, (2,), Float64)
+@test g.nodes[2] == DAE.MwopOutNode(false, nothing, (4,), Float64)
+@test g.nodes[3] == 1:20
+
+@test length(g.connections) == 2
+conn1, conn2 = g.connections
+@test conn1.inputids == [3]
+@test conn1.outputids == [2]
+@test conn2.inputids == [2]
+@test conn2.outputids == [1]
+
+nodemergestrategies = DAE.collect_strategies(g)
+
+@test only(nodemergestrategies[2]) isa DAE.BlockMerge
+@test nodemergestrategies[1] == [nothing]
+@test nodemergestrategies[3] == [nothing]
+
+dimmap = DAE.create_loopdimmap(conn1, conn2, 2)
+@test dimmap isa DAE.DimMap
+@test dimmap.d == Dict(1 => 1)
+
+newop = DAE.merge_operations(DAE.BlockMerge, conn1, conn2, 2, dimmap)
+@test newop isa DAE.UserOp
+@test newop.f isa DAE.BlockFunctionChain
+@test newop.f.funcs[1] === f.f
+@test newop.f.funcs[2] === f2.f
+@test newop.f.args == [((1,), (1,)), ((2,), (2,))]
+@test newop.f.transfers == [1 => [2]]
+
+newconn, newnodes = DAE.merged_connection(DAE.BlockMerge, g, conn1, conn2, 2, newop, nodemergestrategies, dimmap)
+
+@test newconn isa DAE.MwopConnection
+@test newconn.f === newop
+@test newconn.inputids == [3, 4]
+@test newconn.outputids == [2, 1]
+
+newconn.inwindows[1].windows.members[1]
+newconn.inwindows[2].windows.members[1]
+newconn.outwindows[1].windows.members[1]
+newconn.outwindows[2].windows.members[1]
+
+
+
+
 
 g = zopen("https://s3.bgc-jena.mpg.de:9000/esdl-esdc-v2.1.1/esdc-8d-0.25deg-184x90x90-2.1.1.zarr")
 
@@ -30,29 +91,121 @@ t = g["time"]
 tvec = timedecode(t[:], t.attrs["units"]);
 groups = yearmonth.(tvec)
 
-r = aggregate_diskarray(a, mean, (1 => nothing, 2 => 8, 3 => groups), strategy=:reduce)
+r = aggregate_diskarray(a, mean, (1 => nothing, 2 => 8, 3 => groups), strategy=:direct)
 
 #a = compute(r)
 
 r2 = aggregate_diskarray(r, maximum, (2 => nothing,))
 
+
+
 r3 = r .+ 273.15
 
 finalres = r2 .+ r3
 
-finalres[45, 100]
+finalres[1, 45, 100]
 
 g = DAE.MwopGraph()
 outnode = DAE.to_graph!(g, r2);
+
 DAE.remove_aliases!(g)
+
 using CairoMakie, GraphMakie
-#p = graphplot(g,elabels=DAE.edgenames(g),ilabels=DAE.nodenames(g))
+p = graphplot(g, elabels=DAE.edgenames(g), ilabels=DAE.nodenames(g))
 
-dg = DAE.DimensionGraph(g)
-dg.concomps
+#DAE.fuse_step_direct!(g)
 
 
-DAE.fuse_step_direct!(g)
+nodemergestrategies = DAE.collect_strategies(g)
+i_eliminate = findfirst(nodemergestrategies) do strat
+  !isempty(strat) && !all(isnothing, strat)
+end
+### DAE.eliminate_node(g, i_eliminate, nodemergestrategies[i_eliminate], BlockMerge)
+nodegraph = g
+inconids = DAE.inconnections(nodegraph, i_eliminate)
+outconids = DAE.outconnections(nodegraph, i_eliminate)
+inconns = nodegraph.connections[inconids]
+outconns = nodegraph.connections[outconids]
+
+inconn = only(inconns)
+outconn = only(outconns)
+
+dimmap = DAE.create_loopdimmap(inconn, outconn, i_eliminate)
+
+newop = DAE.merge_operations(DAE.BlockMerge, inconn, outconn, i_eliminate, dimmap)
+
+newconn = DAE.merged_connection(DAE.BlockMerge, nodegraph, inconn, outconn, i_eliminate, newop, nodemergestrategies, dimmap)
+
+newconn.inputids
+newconn.outputids
+newconn.inwindows[2].windows.members[2]
+
+
+nodemergestrategies = DAE.collect_strategies(g)
+i_eliminate = findfirst(nodemergestrategies) do strat
+  !isempty(strat) && !all(isnothing, strat)
+end
+
+nodegraph = g;
+inconids = DAE.inconnections(nodegraph, i_eliminate)
+outconids = DAE.outconnections(nodegraph, i_eliminate)
+inconns = nodegraph.connections[inconids]
+outconns = nodegraph.connections[outconids]
+
+inconn = only(inconns)
+outconn = only(outconns)
+
+dimmap = DAE.create_loopdimmap(inconn, outconn, i_eliminate)
+
+chain1 = DAE.BlockFunctionChain(inconn)
+chain2 = DAE.BlockFunctionChain(outconn)
+
+to_eliminate = i_eliminate
+
+chain1.args
+chain2.args
+ifrom = findfirst(==(to_eliminate), inconn.outputids)
+ito = findall(==(to_eliminate), outconn.inputids)
+transfer = ifrom => ito
+
+newfunc = DAE.build_chain(chain1, chain2, dimmap, transfer)
+
+
+newop = DAE.merge_operations(DAE.BlockMerge, inconn, outconn, i_eliminate, dimmap)
+
+newconn = DAE.merged_connection(DAE.BlockMerge, nodegraph, inconn, outconn, i_eliminate, newop, nodemergestrategies, dimmap)
+
+deleteat!(nodegraph.connections, [inconids; outconids])
+push!(nodegraph.connections, newconn)
+
+nodegraph.connections
+
+conn = only(nodegraph.connections)
+op = conn.f
+inputs = InputArray.(g.nodes[conn.inputids], conn.inwindows)
+outspecs = map(g.nodes[conn.outputids], conn.outwindows) do outnode, outwindow
+  (; lw=outwindow, chunks=outnode.chunks, ismem=outnode.ismem)
+end
+
+
+function gmwop_from_conn(conn)
+  op = conn.f
+  inputs = InputArray.(g.nodes[conn.inputids], conn.inwindows)
+  outspecs = map(g.nodes[conn.outputids], conn.outwindows) do outnode, outwindow
+    (; lw=outwindow, chunks=outnode.chunks, ismem=outnode.ismem)
+  end
+  DAE.GMDWop(inputs, outspecs, op)
+end
+
+
+using Graphs: nv, outneighbors, inneighbors
+ioutnodes = (findall(n -> !isempty(inneighbors(g, n)) && isempty(outneighbors(g, n)), 1:nv(g)))
+lastop = findall(conn -> all(in(conn.outputids), ioutnodes), g.connections) |> only
+op = gmwop_from_conn(g.connections[lastop])
+rgraph = results_as_diskarrays(op)[1]
+
+runner = rgraph[1, 45, 100]
+
 
 
 
@@ -98,13 +251,7 @@ remaining_conn.outputids
 remaining_conn.outwindows[1]
 
 
-op = remaining_conn.f
-inputs = InputArray.(g.nodes[remaining_conn.inputids], remaining_conn.inwindows)
-outspecs = map(g.nodes[remaining_conn.outputids], remaining_conn.outwindows) do outnode, outwindow
-  (; lw=outwindow, chunks=outnode.chunks, ismem=outnode.ismem)
-end
 
-mergedop = DAE.GMDWop(inputs, outspecs, op)
 
 rnow = DAE.results_as_diskarrays(mergedop)[2]
 

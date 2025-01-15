@@ -36,6 +36,17 @@ inner_index(w, i) = w[i]
 purify_window(w) = w
 purify_window(w::Window) = w.w
 
+"A group of window steps merged together in a block operation"
+struct WindowGroup{P}
+  parent::P
+  g::UnitRange{Int}
+end
+inner_range(w::WindowGroup) = first(w.parent[first(w.g)]):last(w.parent[last(w.g)])
+inner_values(w::WindowGroup) = w.parent[w.g]
+compute_ordering(r::AbstractVector{<:WindowGroup}) = compute_ordering(first(r).parent)
+compute_overlap(r::AbstractVector{<:WindowGroup}, ordering) = compute_overlap(inner_range.(r), ordering)
+compute_sparsity(r::AbstractVector{<:WindowGroup}) = compute_sparsity(first(r).parent)
+
 function compute_ordering(r)
     exts = extrema.(r)
     allsorted(x;rev=false) = issorted(x,by=first;rev) && issorted(x,by=last;rev)
@@ -47,6 +58,9 @@ function compute_ordering(r)
         Unordered()
     end
 end
+
+
+
 
 switchfunc(::Decreasing,x,y) = y,x
 switchfunc(::Increasing,x,y) = x,y
@@ -86,6 +100,7 @@ function compute_overlap(r,ordering)
     end
 end
 
+
 function compute_sparsity(r)
     total_range = mapreduce(maximum,max,r) - mapreduce(minimum,min,r)
     covered_range = mapreduce(length,+,r)
@@ -96,8 +111,9 @@ function compute_sparsity(r)
     end
 end
 
+
 function to_window(r)
-    eltype(r) <: Int || eltype(r) <: AbstractUnitRange{Int} || throw(ArgumentError("Windows must contain Ints or UnitRanges as elements"))
+    eltype(r) <: Int || eltype(r) <: AbstractUnitRange{Int} || eltype(r) <: WindowGroup || throw(ArgumentError("Windows must contain Ints or UnitRanges as elements"))
     ordering = compute_ordering(r)
     overlap = compute_overlap(r,ordering)
     sparsity = compute_sparsity(r)
