@@ -72,12 +72,69 @@ newconn, newnodes = DAE.merged_connection(DAE.BlockMerge, g, conn1, conn2, 2, ne
 @test newconn.inputids == [3, 4]
 @test newconn.outputids == [2, 1]
 
-newconn.inwindows[1].windows.members[1]
-newconn.inwindows[2].windows.members[1]
-newconn.outwindows[1].windows.members[1]
-newconn.outwindows[2].windows.members[1]
+win1 = newconn.inwindows[1].windows.members[1]
+@test win1 isa DAE.Window
+@test eltype(win1) <: DAE.WindowGroup
+@test length(win1) == 2
+@test win1[1].g == 1:2
+@test win1[1].parent == [1:5, 6:10, 11:15, 16:20]
+@test win1[2].g == 3:4
+@test win1[2].parent == [1:5, 6:10, 11:15, 16:20]
+@test DAE.avg_step(win1) == 10
+@test DAE.max_size(win1) == 10
 
 
+wout1 = newconn.outwindows[1].windows.members[1]
+@test wout1 isa DAE.Window
+@test eltype(wout1) <: DAE.WindowGroup
+@test length(wout1) == 2
+@test wout1[1].g == 1:2
+@test wout1[1].parent == 1:4
+@test wout1[2].g == 3:4
+@test wout1[2].parent == 1:4
+@test DAE.avg_step(wout1) == 2
+@test DAE.max_size(wout1) == 2
+
+win2 = newconn.inwindows[2].windows.members[1]
+@test win2 isa DAE.Window
+@test eltype(win2) <: DAE.WindowGroup
+@test length(win2) == 2
+@test win2[1].g == 1:1
+@test win2[1].parent == [1:2, 3:4]
+@test win2[2].g == 2:2
+@test win2[2].parent == [1:2, 3:4]
+@test DAE.avg_step(win2) == 2
+@test DAE.max_size(win2) == 2
+
+wout2 = newconn.outwindows[2].windows.members[1]
+@test wout2 isa DAE.Window
+@test eltype(wout2) <: DAE.WindowGroup
+@test length(wout2) == 2
+@test wout2[1].g == 1:1
+@test wout2[1].parent == 1:2
+@test wout2[2].g == 2:2
+@test wout2[2].parent == 1:2
+@test DAE.avg_step(wout2) == 1
+@test DAE.max_size(wout2) == 1
+
+@test length(newnodes) == 1
+@test newnodes[1] == DAE.EmptyInput{Float64,1}((4,))
+
+append!(g.nodes, newnodes)
+
+deleteat!(g.connections, [1, 2])
+push!(g.connections, newconn)
+
+newop = DAE.gmwop_from_reducedgraph(g)
+
+inar = newop.inars[1]
+cspec = DAE.get_chunkspec(inar, (2,))
+@test cspec.app_cs == (2,)
+@test cspec.windowfac == (10,)
+
+lr = DAE.custom_loopranges(newop, (1,))
+
+runner = DAE.LocalRunner(newop, lr)
 
 
 
@@ -116,76 +173,6 @@ p = graphplot(g, elabels=DAE.edgenames(g), ilabels=DAE.nodenames(g))
 #DAE.fuse_step_direct!(g)
 
 
-nodemergestrategies = DAE.collect_strategies(g)
-i_eliminate = findfirst(nodemergestrategies) do strat
-  !isempty(strat) && !all(isnothing, strat)
-end
-### DAE.eliminate_node(g, i_eliminate, nodemergestrategies[i_eliminate], BlockMerge)
-nodegraph = g
-inconids = DAE.inconnections(nodegraph, i_eliminate)
-outconids = DAE.outconnections(nodegraph, i_eliminate)
-inconns = nodegraph.connections[inconids]
-outconns = nodegraph.connections[outconids]
-
-inconn = only(inconns)
-outconn = only(outconns)
-
-dimmap = DAE.create_loopdimmap(inconn, outconn, i_eliminate)
-
-newop = DAE.merge_operations(DAE.BlockMerge, inconn, outconn, i_eliminate, dimmap)
-
-newconn = DAE.merged_connection(DAE.BlockMerge, nodegraph, inconn, outconn, i_eliminate, newop, nodemergestrategies, dimmap)
-
-newconn.inputids
-newconn.outputids
-newconn.inwindows[2].windows.members[2]
-
-
-nodemergestrategies = DAE.collect_strategies(g)
-i_eliminate = findfirst(nodemergestrategies) do strat
-  !isempty(strat) && !all(isnothing, strat)
-end
-
-nodegraph = g;
-inconids = DAE.inconnections(nodegraph, i_eliminate)
-outconids = DAE.outconnections(nodegraph, i_eliminate)
-inconns = nodegraph.connections[inconids]
-outconns = nodegraph.connections[outconids]
-
-inconn = only(inconns)
-outconn = only(outconns)
-
-dimmap = DAE.create_loopdimmap(inconn, outconn, i_eliminate)
-
-chain1 = DAE.BlockFunctionChain(inconn)
-chain2 = DAE.BlockFunctionChain(outconn)
-
-to_eliminate = i_eliminate
-
-chain1.args
-chain2.args
-ifrom = findfirst(==(to_eliminate), inconn.outputids)
-ito = findall(==(to_eliminate), outconn.inputids)
-transfer = ifrom => ito
-
-newfunc = DAE.build_chain(chain1, chain2, dimmap, transfer)
-
-
-newop = DAE.merge_operations(DAE.BlockMerge, inconn, outconn, i_eliminate, dimmap)
-
-newconn = DAE.merged_connection(DAE.BlockMerge, nodegraph, inconn, outconn, i_eliminate, newop, nodemergestrategies, dimmap)
-
-deleteat!(nodegraph.connections, [inconids; outconids])
-push!(nodegraph.connections, newconn)
-
-nodegraph.connections
-
-conn = only(nodegraph.connections)
-op = conn.f
-inputs = InputArray.(g.nodes[conn.inputids], conn.inwindows)
-outspecs = map(g.nodes[conn.outputids], conn.outwindows) do outnode, outwindow
-  (; lw=outwindow, chunks=outnode.chunks, ismem=outnode.ismem)
-end
 
 
 function gmwop_from_conn(conn)

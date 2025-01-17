@@ -25,7 +25,9 @@ getloopinds(b::ArrayBuffer) = getloopinds(b.lw)
 function getbufsize(ia, lr)
     map(windowbuffersize, mysub(ia, lr.members), ia.lw.windows.members)
 end
-windowbuffersize(looprange, window) = maximum(c -> internal_size(inner_index(window, c)), looprange)
+windowbuffersize(looprange, window) = maximum(looprange) do c
+    last(inner_range(last(c))) - first(inner_range(first(c))) + 1
+end
 
 "Creates buffers for input arrays"
 function generate_inbuffers(inars, loopranges)
@@ -135,8 +137,7 @@ end
 function get_bufferindices(r, outspecs)
     mywindowrange = mysub(outspecs, r)
     BufferIndex(map(outspecs.lw.windows.members, mywindowrange) do w, r
-        i = inner_index(w, r)
-        first(first(i)):last(last(i))
+        first(inner_range(first(w))):last(inner_range(last(w)))
     end)
 end
 get_bufferindices(r::BufferIndex, _) = r

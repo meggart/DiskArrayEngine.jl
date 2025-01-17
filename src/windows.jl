@@ -42,10 +42,14 @@ struct WindowGroup{P}
   g::UnitRange{Int}
 end
 inner_range(w::WindowGroup) = first(w.parent[first(w.g)]):last(w.parent[last(w.g)])
+inner_range(i::Number) = i:i
+inner_range(i::AbstractRange) = i
 inner_values(w::WindowGroup) = w.parent[w.g]
+inner_values(i) = i
 compute_ordering(r::AbstractVector{<:WindowGroup}) = compute_ordering(first(r).parent)
 compute_overlap(r::AbstractVector{<:WindowGroup}, ordering) = compute_overlap(inner_range.(r), ordering)
 compute_sparsity(r::AbstractVector{<:WindowGroup}) = compute_sparsity(first(r).parent)
+
 
 function compute_ordering(r)
     exts = extrema.(r)

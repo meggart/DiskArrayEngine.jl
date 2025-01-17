@@ -329,3 +329,13 @@ function result_to_graph(res)
     to_graph!(g, res)
     g
 end
+
+function gmwop_from_reducedgraph(g)
+    conn = only(g.connections)
+    op = conn.f
+    inputs = InputArray.(g.nodes[conn.inputids], conn.inwindows)
+    outspecs = map(g.nodes[conn.outputids], conn.outwindows) do outnode, outwindow
+        (; lw=outwindow, chunks=outnode.chunks, ismem=outnode.ismem)
+    end
+    GMDWop((inputs...,), (outspecs...,), op)
+end

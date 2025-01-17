@@ -52,7 +52,7 @@ function access_per_chunk(p::ExecutionPlan)
   (;input_times,output_times)
 end
 function actual_access_per_chunk(p::ExecutionPlan)
-
+  
   input_times = map(p.input_chunkspecs) do chunkspec
     mylr = mysub(chunkspec.lw,p.lr.members)
     actual_chunk_access.(chunkspec.cs,mylr,chunkspec.lw.windows.members)
@@ -170,7 +170,7 @@ function actual_chunk_access(cs,looprange,window)
   n_access = 0
   for lr in looprange 
     w1,w2 = mapreduce(((a,b),(c,d))->(min(a,c),max(b,d)),lr) do ii
-      extrema(window[ii])
+      extrema(inner_range(window[ii]))
     end
     i = DiskArrays.findchunk(cs,w1:w2)
     n_access = n_access+length(i)
@@ -195,7 +195,7 @@ end
 function get_chunkspec(outspec,ot)
   cs = outspec.chunks
   avgs = avg_step.(outspec.lw.windows.members)
-  si = map(m->last(last(m))-first(first(m))+1,outspec.lw.windows.members)
+  si = map(m->last(inner_range(last(m)))-first(inner_range(first(m)))+1,outspec.lw.windows.members)
   if cs isa GridChunks
     cs = cs.chunks
   elseif cs === nothing
@@ -262,9 +262,9 @@ all_constraints(window,chunkspec) = (compute_bufsize(window,chunkspec...),window
 all_constraints!(res,window,chunkspec) = res.=all_constraints(window,chunkspec)
 
 avg_step(lw) = avg_step(lw,get_ordering(lw),get_overlap(lw))
-avg_step(lw,::Union{Increasing,Decreasing},::Any) = length(lw) > 1 ? mean(diff(first.(lw))) : 1.0
+avg_step(lw,::Union{Increasing,Decreasing},::Any) = length(lw) > 1 ? mean(diff(first.(inner_range.(lw)))) : 1.0
 avg_step(lw,::Any,::Any) = error("Not implemented")
-max_size(lw) = maximum(length,lw)
+max_size(lw) = maximum(length,inner_range.(lw))
 
 estimate_singleread(ia::InputArray)= ismem(ia) ? 1e-16 : 1.0
 estimate_singleread(ia) = ia.ismem ? 1e-16 : 3.0
@@ -283,6 +283,17 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   @debug "Optimized Loop sizes: ", sol.u
   lr = adjust_loopranges(op,sol.u;tol_low,tol_high,max_order,force_regular)
   ExecutionPlan(input_chunkspecs, output_chunkspecs,(sol.u...,),totsize,sol.objective,lr)
+end
+
+function custom_loopranges(op, steps::Tuple)
+  totsize = op.windowsize
+  input_chunkspecs = get_chunkspec.(op.inars,(totsize,))
+  output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
+  length(steps) == length(totsize) || error("Steps for loop ranges does not fit number of loop vars ($(length(totsize)))")
+  chunkspecs = (input_chunkspecs..., output_chunkspecs...)
+  tobj = compute_time((steps...,),chunkspecs)
+  lrc = DiskArrays.RegularChunks.(steps,0,totsize)
+  ExecutionPlan(input_chunkspecs, output_chunkspecs,Float64.(steps),totsize,tobj,ProductArray(lrc))
 end
 
 using OrderedCollections, Primes
@@ -382,7 +393,7 @@ function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_o
   adj_cands = first.(r)
   adj_chunks = last.(r)
   
-
+  
   @debug "Adjust candidates: ", adj_cands
   lr = if force_regular
     DiskArrays.RegularChunks.(round.(Int,adj_cands),0,optotal.windowsize)
@@ -403,6 +414,7 @@ loop ranges for a reduction group. This will try to correct loopranges to avoid
 the problems mentioned above.
 """
 function fix_output_overlap(outspecs,lrbreaks)
+  @show lrbreaks
   for outspec in outspecs
     mylr = mysub(outspec.lw,lrbreaks)
     newbreaks = map(mylr,outspec.lw.windows.members) do breaks,window
@@ -428,6 +440,7 @@ function fix_output_overlap(outspecs,lrbreaks)
         breaks
       end
     end
+    @show newbreaks
     for (lr,b) in zip(mylr,newbreaks)
       lr.=b
     end
@@ -441,12 +454,12 @@ function output_chunks(outspec,lr)
   map(mylr,outspec.lw.windows.members) do llr,wi
     ww = map(llr) do l
       wnow = wi[l]
-      first(first(wnow)):last(last(wnow))
+      first(inner_range(first(wnow))):last(inner_range(last(wnow)))
     end
     DiskArrays.chunktype_from_chunksizes(length.(sort(unique(ww),lt=rangelt)))
   end
 end
 
 function output_chunks(p::ExecutionPlan)
-output_chunks.(p.output_chunkspecs,(p.lr,))
+  output_chunks.(p.output_chunkspecs,(p.lr,))
 end
