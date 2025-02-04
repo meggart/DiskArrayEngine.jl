@@ -15,6 +15,7 @@ using Base.Cartesian
     _view(io, x.a,inds...)
 end
 
+#Getindex with already replaced indices
 @inline inner_getindex(p::ProductArray,I) = inner_getindex.(p.members,I)
 inner_getindex(w,i::Int) = w[i]
 

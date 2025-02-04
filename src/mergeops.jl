@@ -112,7 +112,6 @@ function possible_breaks(dg::DimensionGraph, inode::Int)
 end
 
 function possible_breaks(inwindows, outwindows)
-
   if isempty(inwindows) || isempty(outwindows)
     return nothing
   end
@@ -129,7 +128,7 @@ function possible_breaks(inwindows, outwindows)
       if lastcandidate > length(iw)
         return maxval + 1
       else
-        maximum(iw[lastcandidate])
+        maximum(inner_range(iw[lastcandidate]))
       end
     end
     endval_candidates_out = map(outwindows) do iw
@@ -137,13 +136,13 @@ function possible_breaks(inwindows, outwindows)
       if lastcandidate > length(iw)
         return maxval + 1
       else
-        maximum(iw[lastcandidate])
+        maximum(inner_range(iw[lastcandidate]))
       end
     end
     if allequal(endval_candidates_in) && allequal(endval_candidates_out) &&
        first(endval_candidates_in) == first(endval_candidates_out)
       push!(breakvals, first(endval_candidates_in))
-      endval = endval + 1
+      endval = first(endval_candidates_in)+1
     else
       newendval = max(maximum(endval_candidates_in), maximum(endval_candidates_out))
       endval = max(endval + 1, newendval)
@@ -209,41 +208,62 @@ function BlockFunctionChain(conn::MwopConnection)
   BlockFunctionChain(conn.f, (length(conn.inwindows), length(conn.outwindows), nlr))
 end
 
+function replace_nested_buffers(inbuffers, outbuffers, inow)
+  ref_inow = inow
+  for buffer in (inbuffers..., outbuffers...)
+    foreach(buffer.lw.windows.members, getloopinds(buffer)) do window, li
+      if eltype(window) <: WindowGroup
+        wnow = window[ref_inow[li]]
+        newwindows = first(first(wnow).g):last(last(wnow).g)
+        inow = Base.setindex(inow, newwindows, li)
+      end
+    end
+  end
+  inow
+end
 
-
-function run_block(f::BlockFunctionChain, inow, inbuffers_wrapped, outbuffers_now, threaded)
+function run_block(f::BlockFunctionChain, ref_inow, inbuffers_wrapped, outbuffers_now, threaded)
 
   func = first(f.funcs)
   args = first(f.args)
   inbuffers = map(Base.Fix1(getindex, inbuffers_wrapped), first(args))
   outbuffers = map(Base.Fix1(getindex, outbuffers_now), last(args))
 
-  ref_inow = inow
+  outbuffers_written = Int[]
+  transfers_done = Int[]
 
-  for buffer in (inbuffers...,outbuffers...)
-    foreach(buffer.lw.windows.members, getloopinds(buffer)) do window, li
-      if isa(window, NestedWindow) || (isa(window, Window) && isa(window.w, NestedWindow))
-        inow = Base.setindex(inow, inner_range(window, ref_inow[li]), li)
-      end
-    end
+  foreach(last(args)) do iout
+    push!(outbuffers_written, iout)
   end
 
+  inow = replace_nested_buffers(inbuffers, outbuffers, ref_inow)
 
+  # println("Running block 1: ", inow)
+  # println(func.f)
+  # println("Number of inputs: ", length(inbuffers), " used buffers: ", first(args))
+  # println("Number of outputs: ", length(outbuffers), " used buffers: ", last(args))
+  
   run_block(func, inow, inbuffers, outbuffers, threaded)
 
   @assert length(f.funcs) == length(f.args) == length(f.transfers) + 1
 
   for i in 2:length(f.funcs)
-    t = f.transfers[i-1]
-    ifrom = first(t)
-    itos = last(t)
-    ob = outbuffers_now[ifrom]
-    for ito in itos
-      ib = inbuffers_wrapped[ito]
-      if size(ib.a) != size(ob.a)
-        broadcast!(ob.finalize, view(ib.a,Base.OneTo.(size(ob.a))...), ob.a)
-      else
-        broadcast!(ob.finalize, ib.a, ob.a)
+    
+    for t in f.transfers
+      ifrom = first(t)
+      if ifrom in outbuffers_written && !(ifrom in transfers_done)
+        itos = last(t)
+        ob = outbuffers_now[ifrom]
+        for ito in itos
+          ib = inbuffers_wrapped[ito]
+          #println("Transferring buffer from ", ifrom, " to ", ito)
+          if size(ib.a) != size(ob.a)
+            broadcast!(ob.finalize, view(ib.a,Base.OneTo.(size(ob.a))...), ob.a)
+          else
+            broadcast!(ob.finalize, ib.a, ob.a)
+          end
+          push!(transfers_done, ifrom)
+        end
       end
     end
 
@@ -252,15 +272,16 @@ function run_block(f::BlockFunctionChain, inow, inbuffers_wrapped, outbuffers_no
     inbuffers = map(Base.Fix1(getindex, inbuffers_wrapped), first(args))
     outbuffers = map(Base.Fix1(getindex, outbuffers_now), last(args))
 
-
-    inow = ref_inow
-    for buffer in inbuffers
-      foreach(buffer.lw.windows.members, getloopinds(buffer)) do window, li
-        if isa(window, NestedWindow) || (isa(window, Window) && isa(window.w, NestedWindow))
-          inow = Base.setindex(inow, inner_range(window, inow[li]), li)
-        end
-      end
+    foreach(last(args)) do iout
+      push!(outbuffers_written, iout)
     end
+
+    inow = replace_nested_buffers(inbuffers, outbuffers, ref_inow)
+
+    # println("Running block $(i): ", inow)
+    # println(func.f)
+    # println("Number of inputs: ", length(inbuffers), " used buffers: ", first(args))
+    # println("Number of outputs: ", length(outbuffers), " used buffers: ", last(args))
 
     run_block(func, inow, inbuffers, outbuffers, threaded)
 
@@ -297,13 +318,25 @@ function blockwindows_outconn(outconn, strategies, i_eliminate)
   newinwindows, newoutwindows
 end
 
+function wrap_groupwindow(window, groups)
+  groupwindow = if eltype(window) <: WindowGroup
+    parent = first(window).parent
+    map(groups) do g
+      WindowGroup(parent, first(window[first(g)].g):last(window[last(g)].g))
+    end
+  else
+    map(groups) do g
+      WindowGroup(window, g)
+    end
+  end
+  to_window(groupwindow)
+end
+
 function _blockwindows(windows, groups)
   #Now fix the corresponding input windows
   newwindows = map(windows.windows.members, getloopinds(windows)) do w, il
     if haskey(groups, il)
-      groupwindow = map(groups[il]) do g
-        WindowGroup(w, g)
-      end
+      groupwindow = wrap_groupwindow(w, groups[il])
       to_window(groupwindow)
     else
       w

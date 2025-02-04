@@ -252,18 +252,20 @@ function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
     outconns = nodegraph.connections[outconids]
 
     inconn = only(inconns)
-    outconn = only(outconns)
+    newconns = []
+    for outconn in outconns
 
-    dimmap = create_loopdimmap(inconn, outconn, i_eliminate)
+        dimmap = create_loopdimmap(inconn, outconn, i_eliminate)
 
-    newop = merge_operations(appliedstrat, inconn, outconn, i_eliminate, dimmap)
+        newop = merge_operations(appliedstrat, inconn, outconn, i_eliminate, dimmap)
 
-    newconn, newnodes = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
+        newconn, newnodes = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
 
-    append!(nodegraph.nodes, newnodes)
-
+        append!(nodegraph.nodes, newnodes)
+        push!(newconns, newconn)
+    end
     deleteat!(nodegraph.connections, [inconids; outconids])
-    push!(nodegraph.connections, newconn)
+    append!(nodegraph.connections, newconns)
 end
 
 function collect_strategies(g::MwopGraph)
@@ -294,7 +296,7 @@ function fuse_step_direct!(g)
     if i_eliminate === nothing
         false
     else
-        eliminate_node(g, i_eliminate, nodemergestrategies[i_eliminate], DirectMerge)
+        eliminate_node(g, i_eliminate, nodemergestrategies, DirectMerge)
         true
     end
 end
@@ -306,7 +308,7 @@ function fuse_step_block!(g::MwopGraph)
     if i_eliminate === nothing
         error("Can not simplify the graph further")
     else
-        eliminate_node(g, i_eliminate, nodemergestrategies[i_eliminate], BlockMerge)
+        eliminate_node(g, i_eliminate, nodemergestrategies, BlockMerge)
     end
 end
 

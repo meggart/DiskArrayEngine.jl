@@ -8,7 +8,7 @@
 
     outar = zzeros(Float32, 168, 1, 4, chunks=(48, 1, 2))
     @test DAE.is_output_chunk_overlap(outspecs,outar,1,lr)
-    @test !DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
+    @test DAE.is_output_chunk_overlap(outspecs,outar,2,lr)
     @test !DAE.is_output_chunk_overlap(outspecs,outar,3,lr)
     outar = zzeros(Float32, 168, 1, 4, chunks=(12, 1, 1))
     @test !DAE.is_output_chunk_overlap(outspecs,outar,1,lr)

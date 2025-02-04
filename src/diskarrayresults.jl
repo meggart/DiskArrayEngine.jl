@@ -12,7 +12,7 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
   getoutspec(r::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = r.op.outspecs[ISPEC]
   getioutspec(::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = ISPEC
   
-  Base.size(r::GMWOPResult) = maximum.(maximum,getoutspec(r).lw.windows.members)
+  Base.size(r::GMWOPResult) = maximum.(windowmax,getoutspec(r).lw.windows.members)
   
   function results_as_diskarrays(o::GMDWop;cs=nothing,max_cache=1e9)
     ntuple(length(o.outspecs)) do i
@@ -32,8 +32,8 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
     outars = ntuple(_->nothing,length(res.op.outspecs))
     outspec = getoutspec(res)
     foreach(getloopinds(outspec),r,outspec.lw.windows.members) do li,ri,w
-      i1 = findfirst(a->maximum(a)>=first(ri),w)
-      i2 = findlast(a->minimum(a)<=last(ri),w)
+      i1 = findfirst(a->windowmax(a)>=first(ri),w)
+      i2 = findlast(a->windowmin(a)<=last(ri),w)
       s = Base.setindex(s,i1:i2,li)
   end
     outars = Base.setindex(outars,OffsetArray(aout,r...),getioutspec(res))

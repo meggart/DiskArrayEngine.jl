@@ -40,16 +40,30 @@ purify_window(w::Window) = w.w
 struct WindowGroup{P}
   parent::P
   g::UnitRange{Int}
+  function WindowGroup(parent, g::UnitRange{Int})
+    if eltype(parent) <: WindowGroup
+      throw(ArgumentError("WindowGroup cannot contain another WindowGroup"))
+    end
+    if !(0 < first(g) <= last(g) <= length(parent))
+        @show first(g), last(g), length(parent)
+        error()
+    end
+    new{typeof(parent)}(parent, g)
+  end
 end
-inner_range(w::WindowGroup) = first(w.parent[first(w.g)]):last(w.parent[last(w.g)])
+inner_range(w::WindowGroup) = first(inner_range(w.parent[first(w.g)])):last(inner_range(w.parent[last(w.g)]))
 inner_range(i::Number) = i:i
 inner_range(i::AbstractRange) = i
 inner_values(w::WindowGroup) = w.parent[w.g]
 inner_values(i) = i
+inner_getindex(w::Vector{<:WindowGroup}, i::Int64) = first(w).parent[i]
 compute_ordering(r::AbstractVector{<:WindowGroup}) = compute_ordering(first(r).parent)
 compute_overlap(r::AbstractVector{<:WindowGroup}, ordering) = compute_overlap(inner_range.(r), ordering)
 compute_sparsity(r::AbstractVector{<:WindowGroup}) = compute_sparsity(first(r).parent)
-
+windowmax(r) = maximum(r)
+windowmin(r) = minimum(r)
+windowmax(r::WindowGroup) = maximum(i -> windowmax(r.parent[i]), r.g)
+windowmin(r::WindowGroup) = minimum(i -> windowmin(r.parent[i]), r.g)
 
 function compute_ordering(r)
     exts = extrema.(r)

@@ -26,7 +26,7 @@ function getbufsize(ia, lr)
     map(windowbuffersize, mysub(ia, lr.members), ia.lw.windows.members)
 end
 windowbuffersize(looprange, window) = maximum(looprange) do c
-    last(inner_range(last(c))) - first(inner_range(first(c))) + 1
+        last(inner_range(window[last(c)])) - first(inner_range(window[first(c)])) + 1
 end
 
 "Creates buffers for input arrays"
@@ -127,8 +127,6 @@ function read_range(r, ia, buffer)
     fill!(buffer, zero(eltype(buffer)))
     inds = get_bufferindices(r, ia)
     if !isa(ia.a, EmptyInput)
-        # @show r
-        # @show inds.indranges
         buffer[Base.OneTo.(length.(inds.indranges))...] = ia.a[inds.indranges...]
     end
     ArrayBuffer(buffer, offset_from_range(inds), purify_window(ia.lw))
@@ -137,7 +135,7 @@ end
 function get_bufferindices(r, outspecs)
     mywindowrange = mysub(outspecs, r)
     BufferIndex(map(outspecs.lw.windows.members, mywindowrange) do w, r
-        first(inner_range(first(w))):last(inner_range(last(w)))
+        first(inner_range(w[first(r)])):last(inner_range(w[last(r)]))
     end)
 end
 get_bufferindices(r::BufferIndex, _) = r

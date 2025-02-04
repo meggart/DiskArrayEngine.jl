@@ -17,15 +17,17 @@ function rangelt(x,y)
 end
 
 windowminimum(w::AbstractVector{<:Number}) = minimum(w)
-windowminimum(w) = minimum(minimum,w)
+windowminimum(w) = minimum(windowmin,w)
+
 
 windowmaximum(w::AbstractVector{<:Number}) = maximum(w)
-windowmaximum(w) = maximum(maximum,w)
+windowmaximum(w) = maximum(windowmax,w)
+
 
 last_contains_value(w::AbstractVector{<:Number},i) = findlast(<=(i),w)
 last_contains_value(w::AbstractRange,i) = searchsortedlast(w,i)
 function last_contains_value(w,i)
-    ii = findlast(r -> i in r, w)
+    ii = findlast(r -> i in inner_range(r), w)
     if ii === nothing
         length(w)+1
     else
