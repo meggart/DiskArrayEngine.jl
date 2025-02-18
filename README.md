@@ -27,11 +27,11 @@ Before starting to jump into this package, it is worth checking if it is actuall
 4. You want to process *all* or almost all of your data and not just a small subset. Otherwise just read the subset of interest into memory and do your processing based on this one
 
 If you are still here, you should also note that this package is not intended to be used by end-users directly, but the plan is to wrap functionality from this package 
-in other packages. In particular, these are YAXArrays.jl, DimensionalData.jl,or PyramidSchemes.jl, that provide more user-friendly interfaces. 
+in other packages. In particular, these are YAXArrays.jl, DimensionalData.jl, or PyramidSchemes.jl, that provide more user-friendly interfaces. 
 
 ## Status of the package
 
-This package is still under active development and should be considered experimental. Expect things to break and to already be broken. In particular, extensive documentation and tests are still missing. However, some core functionality of the package is already used by e.g. [PyramidScheme.jl](https://github.com/JuliaDataCubes/PyramidScheme.jl) which is why we decided to already register this package while still under active development. 
+This package is still under active development and should be considered experimental. Expect things to break and to already be broken. In particular, extensive documentation and tests are still missing. However, some core functionality of the package is already used by e.g. [PyramidScheme.jl](https://github.com/JuliaDataCubes/PyramidScheme.jl) which is why we decided to register this package now, while it is still under active development. 
 
 ## Basic package usage
 
