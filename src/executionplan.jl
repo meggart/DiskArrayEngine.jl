@@ -3,7 +3,7 @@ import OptimizationMOI, OptimizationOptimJL
 using DiskArrays: DiskArrays, eachchunk, arraysize_from_chunksize
 using Statistics: mean
 using StatsBase: mode
-struct UndefinedChunks <: DiskArrays.ChunkType
+struct UndefinedChunks <: DiskArrays.ChunkVector
   s::Int
 end
 Base.size(c::UndefinedChunks) = (1,)
@@ -335,7 +335,7 @@ function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high
   return floor(Int,optires)//1
 end
 
-function generate_LoopRange(r_adj::Rational,apparent_chunks::ChunkType;tres=3)
+function generate_LoopRange(r_adj::Rational,apparent_chunks::ChunkVector;tres=3)
   splitsize = ceil(Int,r_adj)
   all_ends = last.(apparent_chunks)
   firstend = findlast(<=(splitsize),all_ends)

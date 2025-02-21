@@ -1,6 +1,6 @@
 using DiskArrayEngine
 const DAE = DiskArrayEngine
-using DiskArrays: ChunkType, RegularChunks
+using DiskArrays: ChunkVector, RegularChunks
 using Statistics
 using Zarr, DiskArrays
 using StatsBase: rle, mode

@@ -1,9 +1,9 @@
-using DiskArrays: DiskArrays, ChunkType, GridChunks, AbstractDiskArray
+using DiskArrays: DiskArrays, ChunkVector, GridChunks, AbstractDiskArray
 using Zarr
 export InputArray, create_outwindows, GMDWop, create_outars
 
 internal_size(p) = last(last(p))-first(first(p))+1
-function steps_per_chunk(p,cs::ChunkType)
+function steps_per_chunk(p,cs::ChunkVector)
     centers = map(x->(first(x)+last(x))/2,p)
     slen = sum(cs) do r
         i1 = searchsortedfirst(centers,first(r))
@@ -76,9 +76,9 @@ end
 
 mysub(ia,t) = map(li->t[li],getloopinds(ia))
 
-"Returns the full domain that a `DiskArrays.ChunkType` object covers as a unit range"
+"Returns the full domain that a `DiskArrays.ChunkVector` object covers as a unit range"
 domain_from_chunktype(ct) = first(first(ct)):last(last(ct))
-"Returns the length of a dimension covered by a `DiskArrays.ChunkType` object"
+"Returns the length of a dimension covered by a `DiskArrays.ChunkVector` object"
 length_from_chunktype(ct) = length(domain_from_chunktype(ct))
 
 

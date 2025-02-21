@@ -1,5 +1,5 @@
 using DiskArrayEngine
-using DiskArrays: ChunkType, RegularChunks
+using DiskArrays: ChunkVector, RegularChunks
 using Statistics
 using Interpolations
 using Zarr, DiskArrays, OffsetArrays

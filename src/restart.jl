@@ -60,9 +60,9 @@ function putitem(f::IO, lr::ProductArray)
 end
 function putitem(f::IO, g::DiskArrays.RegularChunks)
     write(f, K_RegularChunks)
-    write(f, g.cs)
+    write(f, g.chunksize)
     write(f, g.offset)
-    write(f, g.s)
+    write(f, g.arraysize)
 end
 function putitem(f::IO, g::DiskArrays.IrregularChunks)
     write(f, K_IrregularChunks)
