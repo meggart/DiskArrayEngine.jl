@@ -1,7 +1,7 @@
 name = "DiskArrayEngine"
 uuid = "2d4b2e14-ccd6-4284-b8b0-2378ace7c126"
 authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 Dagger = "d58978e5-989f-55fb-8d15-ea34adc7bf54"
