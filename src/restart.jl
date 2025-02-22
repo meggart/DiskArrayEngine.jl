@@ -19,7 +19,7 @@ function add_restarter(cb, runfilter, restartfile, loopranges, restartmode)
     end
     cb = (cb..., restarter)
     runfilter = (runfilter..., restarter)
-    cb, runfilter
+    return cb, runfilter
 end
 
 function create_restarter(filename, lr, restartmode)
@@ -62,16 +62,16 @@ function putitem(f::IO, g::DiskArrays.RegularChunks)
     write(f, K_RegularChunks)
     write(f, g.chunksize)
     write(f, g.offset)
-    write(f, g.arraysize)
+    return write(f, g.arraysize)
 end
 function putitem(f::IO, g::DiskArrays.IrregularChunks)
     write(f, K_IrregularChunks)
     write(f, UInt64(length(g.offsets)))
-    write(f, g.offsets)
+    return write(f, g.offsets)
 end
 function putitem(f::IO, i::UnitRange{Int})
     write(f, first(i))
-    write(f, last(i))
+    return write(f, last(i))
 end
 
 function orig_loopranges(r::Restarter)
@@ -122,8 +122,6 @@ function readmember(f)
         error("Unknown membertype")
     end
 end
-
-
 
 function add_entry(r::Restarter, inow::Tuple)
     open(r.file, "a") do f
