@@ -40,7 +40,7 @@ function Graphs.edges(g::MwopGraph)
             end
         end
     end
-    edges
+    return edges
 end
 Graphs.edgetype(::MwopGraph) = Edge
 function Graphs.has_edge(g::MwopGraph, s, d)
@@ -63,8 +63,7 @@ function get_edge(g::MwopGraph, s, d)
         isnothing(iin) ? nothing : (iin, a[iin])
     end
     iconn = findfirst(!isnothing, r)
-    g.connections[iconn], r[iconn]...
-
+    return g.connections[iconn], r[iconn]...
 end
 Graphs.has_vertex(g::MwopGraph, i) = 0 < i <= length(g.nodes)
 Graphs.is_directed(::Type{<:MwopGraph}) = true
@@ -72,18 +71,18 @@ Graphs.ne(g::MwopGraph) = sum(c -> length(c.inputids) * length(c.outputids), g.c
 Graphs.nv(g::MwopGraph) = length(g.nodes)
 Graphs.vertices(g::MwopGraph) = 1:length(g.nodes)
 function inconnections(g, v)
-    findall(c -> in(v, c.outputids), g.connections)
+    return findall(c -> in(v, c.outputids), g.connections)
 end
 function Graphs.inneighbors(g::MwopGraph, v)
-    foldl(inconnections(g, v), init=Int[]) do s, ic
+    foldl(inconnections(g, v); init=Int[]) do s, ic
         append!(s, g.connections[ic].inputids)
     end
 end
 function outconnections(g, v)
-    findall(c -> in(v, c.inputids), g.connections)
+    return findall(c -> in(v, c.inputids), g.connections)
 end
 function Graphs.outneighbors(g::MwopGraph, v)
-    foldl(outconnections(g, v), init=Int[]) do s, ic
+    foldl(outconnections(g, v); init=Int[]) do s, ic
         append!(s, g.connections[ic].outputids)
     end
 end
@@ -92,14 +91,14 @@ function edgenames(g::MwopGraph)
     n = String[]
     for c in g.connections
         s = describe(c, 1)
-        for _ in 1:(length(c.inputids)*length(c.outputids))
+        for _ in 1:(length(c.inputids) * length(c.outputids))
             push!(n, s)
         end
     end
-    n
+    return n
 end
 function nodenames(g::MwopGraph)
-    map(i -> describe(i[2], i[1]), enumerate(g.nodes))
+    return map(i -> describe(i[2], i[1]), enumerate(g.nodes))
 end
 
 function add_node!(g::MwopGraph, a)
@@ -108,22 +107,29 @@ function add_node!(g::MwopGraph, a)
         push!(g.nodes, a)
         id = length(g.nodes)
     end
-    id
+    return id
 end
 add_node!(g::MwopGraph, inar::InputArray) = add_node!(g, inar.a)
-add_node!(g::MwopGraph, outspec::NamedTuple, et) = add_node!(g, MwopOutNode(outspec.ismem, outspec.chunks, map(maximum, outspec.lw.windows.members), et))
+function add_node!(g::MwopGraph, outspec::NamedTuple, et)
+    return add_node!(
+        g,
+        MwopOutNode(
+            outspec.ismem, outspec.chunks, map(maximum, outspec.lw.windows.members), et
+        ),
+    )
+end
 function add_node!(g::MwopGraph, n::MwopOutNode)
     push!(g.nodes, n)
-    length(g.nodes)
+    return length(g.nodes)
 end
 
 ## Two connections are seen as equivalent when they apply the same operation
 ## on the same inputs
 function equivalent_conection(c1, c2)
-    c1.f == c2.f &&
-        c1.inputids == c2.inputids &&
-        c1.inwindows == c2.inwindows &&
-        c1.outwindows == c2.outwindows
+    return c1.f == c2.f &&
+               c1.inputids == c2.inputids &&
+               c1.inwindows == c2.inwindows &&
+               c1.outwindows == c2.outwindows
 end
 
 function merge_connection!(g, i, j)
@@ -159,7 +165,7 @@ end
 
 function remove_aliases!(g::MwopGraph)
     for i in 1:length(g.connections)
-        for j in (i+1):length(g.connections)
+        for j in (i + 1):length(g.connections)
             if equivalent_conection(g.connections[i], g.connections[j])
                 merge_connection!(g, i, j)
                 return remove_aliases!(g)
@@ -167,7 +173,6 @@ function remove_aliases!(g::MwopGraph)
         end
     end
 end
-
 
 function to_graph!(g, res::GMWOPResult, aliases=Dict())
     op = res.op
@@ -192,13 +197,14 @@ function to_graph!(g, res::GMWOPResult, aliases=Dict())
     end
     inwindows = map(i -> i.lw, op.inars)
     outwindows = map(i -> i.lw, op.outspecs)
-    push!(g.connections, MwopConnection(collect(input_ids), output_ids, op.f, inwindows, outwindows))
+    push!(
+        g.connections,
+        MwopConnection(collect(input_ids), output_ids, op.f, inwindows, outwindows),
+    )
     g.dims = 1:length(op.windowsize)
     g
-    output_ids[getioutspec(res)]
+    return output_ids[getioutspec(res)]
 end
-
-
 
 using Graphs: SimpleDiGraph, Graphs
 struct DimensionGraph
@@ -231,7 +237,7 @@ function DimensionGraph(g)
         end
     end
     dimcons = Graphs.connected_components(dimsgraph)
-    DimensionGraph(g, dimsgraph, dimnodes, dimcons)
+    return DimensionGraph(g, dimsgraph, dimnodes, dimcons)
 end
 
 function find_matches(t1, t2)
@@ -242,7 +248,7 @@ function find_matches(t1, t2)
         i2 = findfirst(==(c), t2)
         !isnothing(i1) && !isnothing(i2) && push!(matches, i1 => i2)
     end
-    matches
+    return matches
 end
 
 function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
@@ -254,18 +260,19 @@ function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
     inconn = only(inconns)
     newconns = []
     for outconn in outconns
-
         dimmap = create_loopdimmap(inconn, outconn, i_eliminate)
 
         newop = merge_operations(appliedstrat, inconn, outconn, i_eliminate, dimmap)
 
-        newconn, newnodes = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
+        newconn, newnodes = merged_connection(
+            appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap
+        )
 
         append!(nodegraph.nodes, newnodes)
         push!(newconns, newconn)
     end
     deleteat!(nodegraph.connections, [inconids; outconids])
-    append!(nodegraph.connections, newconns)
+    return append!(nodegraph.connections, newconns)
 end
 
 function collect_strategies(g::MwopGraph)
@@ -273,12 +280,14 @@ function collect_strategies(g::MwopGraph)
     dg = DimensionGraph(g)
 
     #Find possible breaks for merging connections
-    allmerges = Dict(Iterators.flatten(map(dg.concomps) do comps
-        map(comps) do inode
-            n = dg.nodes[inode]
-            n => possible_breaks(dg, inode)
-        end
-    end))
+    allmerges = Dict(Iterators.flatten(
+        map(dg.concomps) do comps
+            map(comps) do inode
+                n = dg.nodes[inode]
+                n => possible_breaks(dg, inode)
+            end
+        end,
+    ))
 
     #Join strategies for each node
     map(enumerate(g.nodes)) do (inode, mainnode)
@@ -312,7 +321,6 @@ function fuse_step_block!(g::MwopGraph)
     end
 end
 
-
 function fuse_graph!(g::MwopGraph)
 
     #Do all direct merges first
@@ -329,7 +337,7 @@ end
 function result_to_graph(res)
     g = MwopGraph()
     to_graph!(g, res)
-    g
+    return g
 end
 
 function gmwop_from_reducedgraph(g)
@@ -339,5 +347,5 @@ function gmwop_from_reducedgraph(g)
     outspecs = map(g.nodes[conn.outputids], conn.outwindows) do outnode, outwindow
         (; lw=outwindow, chunks=outnode.chunks, ismem=outnode.ismem)
     end
-    GMDWop((inputs...,), (outspecs...,), op)
+    return GMDWop((inputs...,), (outspecs...,), op)
 end

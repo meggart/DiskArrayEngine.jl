@@ -1,9 +1,9 @@
-function is_output_chunk_overlap(spec,outar,idim,lr)
+function is_output_chunk_overlap(spec, outar, idim, lr)
     li = getloopinds(spec)
     if idim in li
-        ii = findfirst(==(idim),li)
+        ii = findfirst(==(idim), li)
         windows = spec.lw.windows.members[ii]
-        isa(get_overlap(windows),NonOverlapping) || return true
+        isa(get_overlap(windows), NonOverlapping) || return true
         cs = eachchunk(outar).chunks[ii]
         windows = spec.lw.windows.members[ii]
         looprange = lr.members[idim]
@@ -17,9 +17,9 @@ end
 function has_multiaccess(cs, looprange, windows)
     nhit = zeros(Int, length(cs))
     for r in looprange
-        w1 = inner_index(windows,first(r))
-        w2 = inner_index(windows,last(r))
-        cr = DiskArrays.findchunk(cs,first(w1):last(w2))
+        w1 = inner_index(windows, first(r))
+        w2 = inner_index(windows, last(r))
+        cr = DiskArrays.findchunk(cs, first(w1):last(w2))
         for icr in cr
             nhit[icr] += 1
             if nhit[icr] > 1
@@ -29,54 +29,53 @@ function has_multiaccess(cs, looprange, windows)
     end
     return false
 end
-is_output_chunk_overlap(spec,::Nothing,idim,lr) = false
-function is_output_reducedim(spec,outar,idim)
+is_output_chunk_overlap(spec, ::Nothing, idim, lr) = false
+function is_output_reducedim(spec, outar, idim)
     li = getloopinds(spec)
-    if in(idim,li)
-        i = findfirst(==(idim),li)
+    if in(idim, li)
+        i = findfirst(==(idim), li)
         ov = get_overlap(spec.lw.windows.members[i])
-        isa(ov,Repeating)
+        isa(ov, Repeating)
     else
         true
     end
 end
 
-function split_dim_reasons(op,lr,outars)
-    ret = ntuple(_->Symbol[],ndims(lr))
-    for (spec,ar) in zip(op.outspecs,outars)
+function split_dim_reasons(op, lr, outars)
+    ret = ntuple(_ -> Symbol[], ndims(lr))
+    for (spec, ar) in zip(op.outspecs, outars)
         foreach(1:ndims(lr)) do idim
-            if is_output_chunk_overlap(spec,ar,idim,lr)
+            if is_output_chunk_overlap(spec, ar, idim, lr)
                 @warn "Overlapping output chunks in dimension $idim"
-                push!(ret[idim],:output_chunk)
+                push!(ret[idim], :output_chunk)
             end
-            if is_output_reducedim(spec,ar,idim)
-                push!(ret[idim],:reducedim)
+            if is_output_reducedim(spec, ar, idim)
+                push!(ret[idim], :reducedim)
             end
         end
     end
-    ret
+    return ret
 end
 reason_priority = Dict(
-:foldl => 1, 
-:reducedim => 2,
-:output_chunk => 3, 
-:overlapinputs => 4,
+    :foldl => 1, :reducedim => 2, :output_chunk => 3, :overlapinputs => 4
 )
 
-function get_procgroups(op, lr,outars)
-    spr = split_dim_reasons(op,lr,outars)
+function get_procgroups(op, lr, outars)
+    spr = split_dim_reasons(op, lr, outars)
     groups = GroupLoopDim[]
-    
-    while !all(isempty,spr)
-        bestreason = argmin(s->isempty(s) ? 1000 : minimum(i->reason_priority[i],s),spr)
-        dims = findall(==(bestreason),spr)
-        
-        push!(groups,GroupLoopDim((bestreason...,),(dims...,)))
+
+    while !all(isempty, spr)
+        bestreason = argmin(
+            s -> isempty(s) ? 1000 : minimum(i -> reason_priority[i], s), spr
+        )
+        dims = findall(==(bestreason), spr)
+
+        push!(groups, GroupLoopDim((bestreason...,), (dims...,)))
         for d in dims
             empty!(spr[d])
         end
     end
-    groups
+    return groups
 end
 
 struct GroupLoopDim
@@ -89,60 +88,59 @@ struct DiskEngineScheduler{G,LR,R}
     runner::R
 end
 
-
 function freeloopdims(sch::DiskEngineScheduler)
     nd = ndims(sch.loopranges)
-    freedims = filter(i->length(sch.loopranges.members[i])>1,1:nd)
+    freedims = filter(i -> length(sch.loopranges.members[i]) > 1, 1:nd)
     groupdims = Int[]
     for g in sch.groups
-        append!(groupdims,g.dims)
+        append!(groupdims, g.dims)
     end
-    setdiff(freedims,groupdims)
+    return setdiff(freedims, groupdims)
 end
-
-
 
 function subset_loopranges(lr, dims, reps)
     mem = lr.members
-    foreach(dims,reps) do d, r
+    foreach(dims, reps) do d, r
         rsub = mem[d][r]
-        mem = Base.setindex(mem,[rsub],d)
+        mem = Base.setindex(mem, [rsub], d)
     end
-    ProductArray(mem)
+    return ProductArray(mem)
 end
 
-function schedule(sch::DiskEngineScheduler,::Any,loopdims,loopsub,groupspecs)
+function schedule(sch::DiskEngineScheduler, ::Any, loopdims, loopsub, groupspecs)
     for i in loopsub
-        lrsub = subset_loopranges(sch.loopranges,loopdims,i.I)
-        schsub = DiskEngineScheduler(sch.groups,lrsub,sch.runner)
-        run_group(schsub,groupspecs)
+        lrsub = subset_loopranges(sch.loopranges, loopdims, i.I)
+        schsub = DiskEngineScheduler(sch.groups, lrsub, sch.runner)
+        run_group(schsub, groupspecs)
     end
 end
 
-function run_group(sch, groupspecs,args...)
+function run_group(sch, groupspecs, args...)
     #We just run everything if there are no groups left 
     @debug "Deciding how to run the group"
     if isempty(sch.groups)
         @debug "No subgroups available, stepping into run_loop"
-        run_loop(sch.runner,sch.loopranges,args...;groupspecs)
+        run_loop(sch.runner, sch.loopranges, args...; groupspecs)
     else
         loopdims = freeloopdims(sch)
         if !isempty(loopdims)
-            loopsub = CartesianIndices((map(d->1:length(sch.loopranges.members[d]),loopdims)...,))
+            loopsub = CartesianIndices((
+                map(d -> 1:length(sch.loopranges.members[d]), loopdims)...,
+            ))
             @debug "Free loop dimensions available, splitting loop into $(length(loopsub)) subgroups"
-            schedule(sch,sch.runner,loopdims,loopsub,groupspecs,args...)
-        else 
+            schedule(sch, sch.runner, loopdims, loopsub, groupspecs, args...)
+        else
             @debug "Groups are available for split"
             g = last(sch.groups)
             if groupspecs !== nothing
-                g = (groupspecs...,g)
+                g = (groupspecs..., g)
             else
                 g = (g,)
             end
             @debug "New Group specs are ", g
-            gnew = sch.groups[1:end-1]
-            schnew = DiskEngineScheduler(gnew,sch.loopranges,sch.runner)
-            run_group(schnew,g,args...)
+            gnew = sch.groups[1:(end - 1)]
+            schnew = DiskEngineScheduler(gnew, sch.loopranges, sch.runner)
+            run_group(schnew, g, args...)
         end
     end
 end
@@ -150,11 +148,9 @@ end
 function Base.run(runner::Union{LocalRunner,PMapRunner})
     groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
-    run_group(sch,nothing)
+    run_group(sch, nothing)
     return runner.outars
 end
-
-
 
 # function DiskArrayEngine.schedule(sch,::DistributedRunner,loopdims,loopsub,groupspecs)
 #     w = workers(sch.runner.workers)
