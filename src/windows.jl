@@ -138,18 +138,24 @@ function to_window(r)
     Window(r,ordering,overlap,sparsity)
 end
 
-struct MovingWindow <: AbstractVector{UnitRange{Int}}
+struct MovingWindow{C} <: AbstractVector{UnitRange{Int}}
     first::Int
     steps::Int
     width::Int
     n::Int
+    clamp::C
 end
+MovingWindow(first, steps, width, n) = MovingWindow(first, steps, width, n, nothing)
+
 Base.size(m::MovingWindow) = (m.n,)
-Base.getindex(m::MovingWindow,i::Int) = (m.first+(i-1)*m.steps):(m.first+(i-1)*m.steps+m.width-1)
+Base.getindex(m::MovingWindow{Nothing}, i::Int) = (m.first+(i-1)*m.steps):(m.first+(i-1)*m.steps+m.width-1)
+Base.getindex(m::MovingWindow, i::Int) = max(first(m.clamp), m.first + (i - 1) * m.steps):min(last(m.clamp), m.first + (i - 1) * m.steps + m.width - 1)
 get_ordering(w::MovingWindow) = w.steps > 0 ? Increasing() : Decreasing()
 get_overlap(w::MovingWindow) = w.width > abs(w.steps) ? Overlapping() : NonOverlapping()
 get_sparsity(w::MovingWindow) = abs(w.steps) > 2*w.width ? Sparse(w.width/abs(w.steps)) : Dense()
 to_window(r::MovingWindow) = r
+
+
 
 get_ordering(r::AbstractRange{Int}) = step(r)>0 ? Increasing() : Decreasing()
 get_overlap(r::AbstractRange{Int}) = NonOverlapping()

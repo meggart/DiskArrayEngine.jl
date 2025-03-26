@@ -37,13 +37,13 @@ struct CapturedArgsFunc{F,A,KW}
     args::A
     kwargs::KW
 end
-(c::CapturedArgsFunc)(x) = c.f(x,c.args...;c.kwargs...)
-(c::CapturedArgsFunc)(x1,x2) = c.f(x1,x2,c.args...;c.kwargs...)
-(c::CapturedArgsFunc)(x1,x2,x3) = c.f(x1,x2,x3,c.args...;c.kwargs...)
-(c::CapturedArgsFunc)(x1,x2,x3,x4) = c.f(x1,x2,x3,x4,c.args...;c.kwargs...)
-(c::CapturedArgsFunc)(x1,x2,x3,x4,x5) = c.f(x1,x2,x3,x4,x5,c.args...;c.kwargs...)
-(c::CapturedArgsFunc)(x1,x2,x3,x4,x5,x6) = c.f(x1,x2,x3,x4,x5,x6,c.args...;c.kwargs...)
-(c::CapturedArgsFunc)(x...) = c.f(x...,c.args...;c.kwargs...)
+(c::CapturedArgsFunc)(x;rkwargs...) = c.f(x,c.args...;rkwargs...,c.kwargs...)
+(c::CapturedArgsFunc)(x1,x2;rkwargs...) = c.f(x1,x2,c.args...;rkwargs...,c.kwargs...)
+(c::CapturedArgsFunc)(x1,x2,x3;rkwargs...) = c.f(x1,x2,x3,c.args...;rkwargs...,c.kwargs...)
+(c::CapturedArgsFunc)(x1,x2,x3,x4;rkwargs...) = c.f(x1,x2,x3,x4,c.args...;rkwargs...,c.kwargs...)
+(c::CapturedArgsFunc)(x1,x2,x3,x4,x5;rkwargs...) = c.f(x1,x2,x3,x4,x5,c.args...;rkwargs...,c.kwargs...)
+(c::CapturedArgsFunc)(x1,x2,x3,x4,x5,x6;rkwargs...) = c.f(x1,x2,x3,x4,x5,x6,c.args...;rkwargs...,c.kwargs...)
+(c::CapturedArgsFunc)(x...;rkwargs...) = c.f(x...,c.args...;rkwargs...,c.kwargs...)
 Base.show(io::IO,f::CapturedArgsFunc) = show(io,f.f)
 
 function create_userfunction(
