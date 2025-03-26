@@ -413,8 +413,7 @@ If one of the outputs is a reduction it is important not to have overlapping
 loop ranges for a reduction group. This will try to correct loopranges to avoid
 the problems mentioned above.
 """
-function fix_output_overlap(outspecs,lrbreaks)
-  @show lrbreaks
+function fix_output_overlap(outspecs, lrbreaks)
   for outspec in outspecs
     mylr = mysub(outspec.lw,lrbreaks)
     newbreaks = map(mylr,outspec.lw.windows.members) do breaks,window
@@ -440,7 +439,6 @@ function fix_output_overlap(outspecs,lrbreaks)
         breaks
       end
     end
-    @show newbreaks
     for (lr,b) in zip(mylr,newbreaks)
       lr.=b
     end

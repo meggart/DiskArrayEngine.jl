@@ -53,8 +53,8 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
     nothing
   end
 
-  function compute!(ret,a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,kwargs...)
-    lr = DiskArrayEngine.optimize_loopranges(a.op,5e8,tol_low=0.2,tol_high=0.05,max_order=2)
+  function compute!(ret,a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,max_cache=5e8,kwargs...)
+    lr = DiskArrayEngine.optimize_loopranges(a.op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
     par_only = runner <: DaggerRunner
     outars = create_outars(a.op,lr;par_only)
     iout = findfirst(i->Val(i)===a.ires,1:length(outars))
