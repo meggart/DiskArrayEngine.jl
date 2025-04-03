@@ -35,11 +35,11 @@ function getallsteps(xcoarse,xfine)
     interpinds, resin, resout
 end
 
-function interpolate_block!(xout, data, nodes...; dims,threaded=false)
+function interpolate_block!(xout, data, nodes...; dims,method=Linear(),threaded=false)
     innodes = axes(data)
     isinterp = ntuple(in(dims),ndims(data))
     modes = map(isinterp) do m
-        m ? BSpline(Linear()) : NoInterp()
+        m ? BSpline(method) : NoInterp()
     end
     outnodes = innodes
     for d in dims
@@ -72,7 +72,7 @@ x2 = 5.0:0.5:20.0
 y2 = 1.5:1.0:14.5
 r = interpolate_diskarray(a,(1=>(x,x2),2=>(y,y2)))
 """
-function interpolate_diskarray(a,conv;outspecs=nothing)
+function interpolate_diskarray(a,conv;method=Linear(),outspecs=nothing)
     allinfo = [k=>getallsteps(v...) for (k,v) in conv]
     inwindows = Base.OneTo.(size(a))
     outwindows = Base.OneTo.(size(a))
@@ -93,7 +93,7 @@ function interpolate_diskarray(a,conv;outspecs=nothing)
         (create_outwindows(outsize;windows=outwindows,outspecs...),)
     end
     inars = (InputArray(a,windows=inwindows), addarrays...)
-    f = create_userfunction(interpolate_block!,Union{Float32,Missing},is_blockfunction=true,is_mutating=true,dims=dims)
+    f = create_userfunction(interpolate_block!,Union{Float32,Missing},is_blockfunction=true,is_mutating=true,dims=dims,kwargs=(;method=method))
     
     optotal = GMDWop(inars, outars, f)
     r, = results_as_diskarrays(optotal)
