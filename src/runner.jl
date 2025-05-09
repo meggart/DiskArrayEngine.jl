@@ -168,21 +168,22 @@ function run_loop(runner::LocalRunner,loopranges = runner.loopranges;groupspecs=
     )
 end
 
-function default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter)
+function default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter, piddir)
     @debug "inow = ", inow
     if all(c -> need_run(inow, c), runfilter)
         inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
         outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
-        put_buffer.((inow,),outbuffers_now,outars,nothing)
+        put_buffer.((inow,),outbuffers_now,outars,(piddir,))
         clean_aggregator.(outbuffers)
         notify_callback(cb, inow)
     end
+    true
 end
 
 @noinline function run_loop(::LocalRunner, op, inbuffers_pure, outbuffers, threaded, outars, loopranges, cb, runfilter; groupspecs=nothing)
     for inow in loopranges
-        default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter)
+        default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter,nothing)
     end
     notify_callback(cb, nothing)
 end
@@ -228,7 +229,7 @@ end
 
 @noinline function run_loop(::PMapRunner, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter, loopranges; groupspecs=nothing)
     pmap(CachingPool(workers()),loopranges) do inow
-        default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter)
+        default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter,nothing)
     end
     notify_callback(cb, nothing)
 end

@@ -272,7 +272,7 @@ estimate_singleread(ia) = ia.ismem ? 1e-16 : 3.0
 function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,max_order=2,x0 = nothing, force_regular=false)
   lb = [0.0,map(_->1.0,op.windowsize)...]
   ub = [max_cache,op.windowsize...]
-  x0 = x0 === nothing ? [2.0 for _ in op.windowsize] : x0
+  x0 = x0 === nothing ? [1.5 for _ in op.windowsize] : x0
   totsize = op.windowsize
   input_chunkspecs = get_chunkspec.(op.inars,(totsize,))
   output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
