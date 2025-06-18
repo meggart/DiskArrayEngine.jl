@@ -1,12 +1,12 @@
 # DiskArrayEngine.jl
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/meggart/DiskArrayEngine.jl/blob/main/LICENSE)
-<!-- [![](https://img.shields.io/badge/docs-stable-blue.svg)](https://meggart.github.io/DiskArrayEngine.jl/stable) -->
-<!-- [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://meggart.github.io/DiskArrayEngine.jl/dev) -->
 [![CI](https://github.com/meggart/DiskArrayEngine.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/meggart/DiskArrayEngine.jl/actions/workflows/CI.yml)
 [![Codecov](https://codecov.io/gh/meggart/DiskArrayEngine.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/meggart/DiskArrayEngine.jl)
-<!-- [![Aqua.jl Quality Assurance](https://img.shields.io/badge/Aquajl-%F0%9F%8C%A2-aqua.svg)](https://github.com/JuliaTesting/Aqua.jl) -->
 [![Downloads](https://img.shields.io/badge/dynamic/json?url=http%3A%2F%2Fjuliapkgstats.com%2Fapi%2Fv1%2Fmonthly_downloads%2FDiskArrayEngine&query=total_requests&suffix=%2Fmonth&label=Downloads)](https://juliapkgstats.com/pkg/DiskArrayEngine)
+<!-- [![](https://img.shields.io/badge/docs-stable-blue.svg)](https://meggart.github.io/DiskArrayEngine.jl/stable) -->
+<!-- [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://meggart.github.io/DiskArrayEngine.jl/dev) -->
+<!-- [![Aqua.jl Quality Assurance](https://img.shields.io/badge/Aquajl-%F0%9F%8C%A2-aqua.svg)](https://github.com/JuliaTesting/Aqua.jl) -->
 
 Tools for defining and running large computations on DiskArrays.
 
