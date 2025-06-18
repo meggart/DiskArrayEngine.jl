@@ -6,7 +6,7 @@
 [![CI](https://github.com/meggart/DiskArrayEngine.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/meggart/DiskArrayEngine.jl/actions/workflows/CI.yml)
 [![Codecov](https://codecov.io/gh/meggart/DiskArrayEngine.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/meggart/DiskArrayEngine.jl)
 <!-- [![Aqua.jl Quality Assurance](https://img.shields.io/badge/Aquajl-%F0%9F%8C%A2-aqua.svg)](https://github.com/JuliaTesting/Aqua.jl) -->
-[![Downloads](https://shields.io/endpoint?url=https://pkgs.genieframework.com/api/v1/badge/DiskArrayEngine&label=Downloads)](https://pkgs.genieframework.com?packages=DiskArrayEngine)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=http%3A%2F%2Fjuliapkgstats.com%2Fapi%2Fv1%2Fmonthly_downloads%2FDiskArrayEngine&query=total_requests&suffix=%2Fmonth&label=Downloads)](https://juliapkgstats.com/pkg/DiskArrayEngine)
 
 Tools for defining and running large computations on DiskArrays.
 
