@@ -71,6 +71,7 @@ y = 2.0:3.0:14.0
 x2 = 5.0:0.5:20.0
 y2 = 1.5:1.0:14.5
 r = interpolate_diskarray(a,(1=>(x,x2),2=>(y,y2)))
+````
 """
 function interpolate_diskarray(a,conv;method=Linear(),outspecs=nothing)
     allinfo = [k=>getallsteps(v...) for (k,v) in conv]
