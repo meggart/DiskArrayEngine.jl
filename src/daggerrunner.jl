@@ -7,11 +7,14 @@ struct DaggerRunner
     threaded::Bool
     workerthreads::Bool
     inbuffers_pure
+    cbc
+    runfilter
 end
 make_outbuffer_shard(op,runnerloopranges,workerthreads) = Dagger.shard(per_thread=workerthreads) do 
     generate_outbuffers(op.outspecs,op.f,runnerloopranges)
 end
-function DaggerRunner(op,exec_plan,outars=create_outars(op,exec_plan;par_only=true);workerthreads=false,threaded=true)
+function DaggerRunner(op,exec_plan,outars=create_outars(op,exec_plan;par_only=true);
+    workerthreads=false,threaded=true,showprogress=true,restartfile=nothing,restartmode=:continue)
     inars = op.inars
     loopranges = plan_to_loopranges(exec_plan)
     inbuffers = Dagger.shard(per_thread=workerthreads) do
@@ -22,7 +25,19 @@ function DaggerRunner(op,exec_plan,outars=create_outars(op,exec_plan;par_only=tr
     catch e
         rethrow(e)
     end
-    DaggerRunner(op,loopranges,outars, threaded, workerthreads, inbuffers)
+    cb, runfilter = callback_and_runfilters(loopranges, showprogress, restartfile, restartmode)
+    cbc = if !isempty(cb)
+        channel = Distributed.RemoteChannel(() -> Channel{Union{Nothing,eltype(loopranges)}}(), 1)
+        @async while true
+            update = take!(channel)
+            isnothing(update) && break
+            notify_callback(cb, update)
+        end
+        channel
+    else
+        ()
+    end
+    DaggerRunner(op,loopranges,outars, threaded, workerthreads, inbuffers, cbc, runfilter)
 end
 
 buffer_mergefunc(red,::Type{<:Union{Dagger.Chunk,Dagger.Thunk, Dagger.EagerThunk}}) = (buf1,buf2) -> begin
@@ -37,12 +52,12 @@ end
 
 function run_loop(runner::DaggerRunner,loopranges,outbuffers...;groupspecs=nothing)
     @noinline run_loop(runner,runner.op,runner.inbuffers_pure,runner.loopranges,runner.workerthreads,
-    runner.outars,runner.threaded,loopranges,outbuffers...;groupspecs)
+    runner.outars,runner.threaded,loopranges,runner.cbc,runner.runfilter,outbuffers...;groupspecs)
 end
 
 
 function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthreads,
-    outars,threaded, loopranges,outbuffers...;groupspecs=nothing)
+    outars,threaded, loopranges,cbc,runfilter,outbuffers...;groupspecs=nothing)
     @debug "Groupspecs are ", groupspecs
     piddir = if groupspecs !== nothing && any(i->in(:output_chunk,i.reasons),groupspecs)
         tempname()
@@ -53,7 +68,8 @@ function run_loop(::DaggerRunner,op,inbuffers_pure,runnerloopranges,workerthread
     local_outbuffers = make_outbuffer_shard(op,runnerloopranges,workerthreads)
     op = op
     r = broadcast(loopranges) do inow
-        Dagger.spawn(inbuffers_pure,local_outbuffers,inow,piddir,outars,loopranges) do inbuffers_pure, outbuffers, inow, piddir, outars,loopranges
+        Dagger.spawn(inbuffers_pure,local_outbuffers,inow,piddir,outars,cbc,runfilter) do inbuffers_pure, outbuffers, inow, piddir, outars,cbc,runfilter
+            #default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cbc, runfilter, piddir)
             @debug myid(), " Starting block ", inow
             inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
             outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
@@ -109,7 +125,7 @@ matches_proc(k::Dagger.OSProc,c::Dagger.ThreadProc) = c.tid != 1 ? error("Proces
 
 function Base.run(runner::DaggerRunner)
     @debug "Starting to run"
-    groups = get_procgroups(runner.op, runner.loopranges, runner.outars)
+    groups = get_procgroups(runner.op, runner.loopranges, fetch.(runner.outars))
     sch = DiskEngineScheduler(groups, runner.loopranges, runner)
     opts = runner.workerthreads ? (;) : (;scope = Dagger.scope(thread=1))
     Dagger.with_options(;opts...) do

@@ -271,7 +271,7 @@ function put_buffer(r, bufnow, outarc, piddir)
         skip2 = max.(0, last.(inds) .- i2)
         inds2 = range.(first.(inds) .+ skip1, last.(inds) .- skip2)
         r2 = range.(1 .+ skip1, skip1 .+ length.(inds2))
-        if piddir !== nothing
+        if piddir !== nothing && DiskArrays.isdisk(outar)
             @debug "$(myid()) acquiring lock $piddir to write to $inds2"
             Pidfile.mkpidlock(piddir, wait=true, stale_age=100) do
                 broadcast!(fin, view(outar, inds2...), bufnow.a[r2...])

@@ -213,6 +213,7 @@ function PMapRunner(op,exec_plan,outars=create_outars(op,exec_plan);threaded=tru
             isnothing(update) && break
             notify_callback(cb, update)
         end
+        channel
     else
         ()
     end

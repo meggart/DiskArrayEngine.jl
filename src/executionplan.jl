@@ -399,7 +399,8 @@ function adjust_loopranges(optotal,approx_opti;tol_low=0.2,tol_high = 0.05,max_o
     DiskArrays.RegularChunks.(round.(Int,adj_cands),0,optotal.windowsize)
   else
     lr = generate_LoopRange.(adj_cands,adj_chunks,tres=3)
-    DiskArrays.chunktype_from_chunksizes.(fix_output_overlap(optotal.outspecs,lr))
+    # DiskArrays.chunktype_from_chunksizes.(fix_output_overlap(optotal.outspecs,lr))
+    DiskArrays.chunktype_from_chunksizes.(lr)
   end
   foreach(lr,optotal.windowsize) do l,s
     @assert first(first(l))>=1

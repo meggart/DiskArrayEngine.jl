@@ -1,11 +1,19 @@
 export disk_onlinestat
 using OnlineStats: OnlineStats
-function fit_online!(xout,x,f=identity)
+function fit_online!(xout,x,f=identity,fg=identity)
     fx = f(x)
     ismissing(fx) || OnlineStats.fit!(xout[],fx)
 end
+function fit_online!(xout,x,group,f,fg)
+    ind = fg(group)
+    ismissing(ind) && return
+    stat = xout[ind]
+    fx = f(x)
+    ismissing(fx) || isnan(fx) || OnlineStats.fit!(stat,fx)
+end
+
 fin_online(x) = OnlineStats.nobs(x) == 0 ? missing : OnlineStats.value(x);
-disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt=typeof(OnlineStats.value(s())),preproc=identity) = create_userfunction(
+disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt=typeof(OnlineStats.value(s())),preproc=identity,groupconv=identity) = create_userfunction(
     fit_online!,
     rt,
     is_mutating = true,
@@ -14,7 +22,7 @@ disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt=typeof(OnlineStats.value(s(
     finalize=fin_online,
     buftype = typeof(s()),
     allow_threads=false,
-    args = (preproc,)
+    args = (preproc,groupconv)
 )
 
 struct DerivedOnlineStat{P,V,F} <: OnlineStats.OnlineStat{Number}
@@ -28,7 +36,7 @@ OnlineStats.value(s::DerivedOnlineStat) = s.valuefunc(s.parent)
 OnlineStats.nobs(s::DerivedOnlineStat) = OnlineStats.nobs(s.parent)
 
 
-disk_onlinestat(s,preproc=identity) = disk_onlinestat(func_to_online[s]...,preproc)
+disk_onlinestat(s,args...) = disk_onlinestat(func_to_online[s]...,args...)
 has_onlineversion(f) = f in keys(func_to_online)
 
 const func_to_online = Dict([

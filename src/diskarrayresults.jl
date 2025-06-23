@@ -3,12 +3,12 @@ using DiskArrays: AbstractDiskArray, RegularChunks
 using OffsetArrays: OffsetArray
 
 struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
-    op::G
-    ires::Val{ISPEC}
-    chunksize::CS
-    max_cache::Float64
-    s::NTuple{N,Int}
-  end
+  op::G
+  ires::Val{ISPEC}
+  chunksize::CS
+  max_cache::Float64
+  s::NTuple{N,Int}
+end
   getoutspec(r::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = r.op.outspecs[ISPEC]
   getioutspec(::GMWOPResult{<:Any,<:Any,<:Any,<:Any,ISPEC}) where ISPEC = ISPEC
   
@@ -53,8 +53,10 @@ struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
     nothing
   end
 
-  function compute!(ret,a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,max_cache=5e8,kwargs...)
-    lr = DiskArrayEngine.optimize_loopranges(a.op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
+  function compute!(ret,a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,max_cache=5e8,lr = nothing,kwargs...)
+    if lr === nothing
+      lr = DiskArrayEngine.optimize_loopranges(a.op,max_cache,tol_low=0.2,tol_high=0.05,max_order=2)
+    end
     par_only = runner <: DaggerRunner
     outars = create_outars(a.op,lr;par_only)
     iout = findfirst(i->Val(i)===a.ires,1:length(outars))

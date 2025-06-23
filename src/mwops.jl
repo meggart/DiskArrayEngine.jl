@@ -115,6 +115,25 @@ function getwindowsize(inars, outspecs)
     end
   end
 
+
+"""
+    GMDWop{N,I,O,F<:UserOp,SPL}
+
+A struct representing a generalized multi-dimensional windowed operation.
+
+# Fields
+- `inars::I`: Tuple or collection of input arrays, each wrapped as `InputArray`.
+- `outspecs::O`: Tuple or collection of output array specifications.
+- `f::F`: The user-supplied operation, typically a UserFunc returned by `create_userfunction`.
+- `windowsize::NTuple{N,Int}`: The number of windows along each loop dimension.
+- `lspl::SPL`: Loop splitter object or `nothing`, used for parallelization or block processing.
+
+# Description
+`GMDWop` encapsulates all information required to perform a lazy windowed operation over multiple input arrays and produce one or more outputs. 
+It manages the mapping between logical loop dimensions and physical array dimensions, window sizes, and any loop splitting for efficient computation.
+
+Construct using `GMDWop(inars, outspecs, f)`, where `inars` and `outspecs` are collections of input and output specifications, and `f` is the user operation.
+"""
 struct GMDWop{N,I,O,F<:UserOp,SPL}
     inars::I
     outspecs::O
@@ -122,6 +141,7 @@ struct GMDWop{N,I,O,F<:UserOp,SPL}
     windowsize::NTuple{N,Int}
     lspl::SPL
 end
+
 function GMDWop(inars, outspecs, f)
   s = getwindowsize(inars, outspecs)
   lspl = isa(f.f, BlockFunction) ? nothing : get_loopsplitter(length(s), outspecs)

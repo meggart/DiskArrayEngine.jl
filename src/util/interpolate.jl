@@ -22,11 +22,12 @@ end
 
 function getallsteps(xcoarse,xfine)
     interpinds = getinterpinds(xcoarse, xfine)
+    rev = issorted(interpinds) ? false : issorted(interpinds, rev=true) ? true : error("Axis values are not sorted")
     resout = UnitRange{Int}[]
     icur = 1
     while icur <= length(interpinds)
-        i1 = floor(interpinds[icur])
-        inext = searchsortedlast(interpinds,i1+1)
+        i1 = rev ? ceil(interpinds[icur]) : floor(interpinds[icur])
+        inext = searchsortedlast(interpinds, i1 + 1, rev=rev)
         push!(resout,icur:inext)
         icur = inext+1
     end
@@ -72,7 +73,7 @@ x2 = 5.0:0.5:20.0
 y2 = 1.5:1.0:14.5
 r = interpolate_diskarray(a,(1=>(x,x2),2=>(y,y2)))
 """
-function interpolate_diskarray(a,conv;method=Linear(),outspecs=nothing)
+function interpolate_diskarray(a, conv; method=Linear(), outspecs=nothing, outtype=Float32)
     allinfo = [k=>getallsteps(v...) for (k,v) in conv]
     inwindows = Base.OneTo.(size(a))
     outwindows = Base.OneTo.(size(a))
@@ -93,7 +94,7 @@ function interpolate_diskarray(a,conv;method=Linear(),outspecs=nothing)
         (create_outwindows(outsize;windows=outwindows,outspecs...),)
     end
     inars = (InputArray(a,windows=inwindows), addarrays...)
-    f = create_userfunction(interpolate_block!,Union{Float32,Missing},is_blockfunction=true,is_mutating=true,dims=dims,kwargs=(;method=method))
+    f = create_userfunction(interpolate_block!, Union{outtype,Missing}, is_blockfunction=true, is_mutating=true, dims=dims, kwargs=(; method=method))
     
     optotal = GMDWop(inars, outars, f)
     r, = results_as_diskarrays(optotal)
