@@ -33,7 +33,7 @@ function merge_operations(::Type{<:DirectMerge}, inconn, outconn, to_eliminate, 
   outmutating = outconn.f.f.m isa Mutating
   @assert only(inconn.outputids) == to_eliminate
   arg1 = ntuple(i -> i + outmutating, length(inconn.inputids))
-  inow = length(arg1) + 1
+  inow = length(arg1) + 1 + outmutating
   arg2 = Tuple{Bool,Int}[]
   if outmutating
     push!(arg2, (false, 1))
