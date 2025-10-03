@@ -1,5 +1,5 @@
 using Ipopt, Optimization
-import OptimizationMOI, OptimizationOptimJL
+import OptimizationOptimJL
 using DiskArrays: DiskArrays, eachchunk, arraysize_from_chunksize
 using Statistics: mean
 using StatsBase: mode
