@@ -1,4 +1,4 @@
-using Ipopt, Optimization
+using Ipopt, Optimization, OptimizationIpopt
 import OptimizationOptimJL
 using DiskArrays: DiskArrays, eachchunk, arraysize_from_chunksize
 using Statistics: mean
