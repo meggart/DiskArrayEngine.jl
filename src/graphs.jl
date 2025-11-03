@@ -111,7 +111,7 @@ function add_node!(g::MwopGraph, a)
     id
 end
 add_node!(g::MwopGraph, inar::InputArray) = add_node!(g, inar.a)
-add_node!(g::MwopGraph, outspec::NamedTuple, et) = add_node!(g, MwopOutNode(outspec.ismem, outspec.chunks, map(maximum, outspec.lw.windows.members), et))
+add_node!(g::MwopGraph, outspec::NamedTuple, et) = add_node!(g, MwopOutNode(outspec.ismem, outspec.chunks, map(windowmaximum, outspec.lw.windows.members), et))
 function add_node!(g::MwopGraph, n::MwopOutNode)
     push!(g.nodes, n)
     length(g.nodes)
