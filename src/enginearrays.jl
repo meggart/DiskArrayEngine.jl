@@ -133,7 +133,6 @@ function mapslices_engine(f,A...;dims,outchunks=nothing)
     nd = maximum(bcd)
     ia = map(A) do ar
         lw = map(bcdims(ar),size(ar)) do idim, sa
-            @show idim, sa, s
             sloop = s[idim]
             if idim in dims    
                 [1:sa]
