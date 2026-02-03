@@ -1,7 +1,7 @@
 name = "DiskArrayEngine"
 uuid = "2d4b2e14-ccd6-4284-b8b0-2378ace7c126"
-authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
 version = "0.2.5"
+authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
 
 [deps]
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
@@ -21,9 +21,15 @@ Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 
+[weakdeps]
+Dagger = "d58978e5-989f-55fb-8d15-ea34adc7bf54"
+
+[extensions]
+DaggerExt = "Dagger"
+
 [compat]
 Dagger = "0.18, 0.19"
-DiskArrays = "0.3, 0.4.10"
+DiskArrays = "0.4.10"
 Graphs = "1"
 Interpolations = "0.14, 0.15, 0.16"
 Ipopt = "1"
@@ -38,12 +44,6 @@ Statistics = "1"
 StatsBase = "0.34"
 Zarr = "0.9"
 julia = "1"
-
-[extensions]
-DaggerExt = "Dagger"
-
-[weakdeps]
-Dagger = "d58978e5-989f-55fb-8d15-ea34adc7bf54"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
