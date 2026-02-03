@@ -5,3 +5,7 @@ DocumenterVitepress = "4710194d-e776-4893-9690-8d956a29c365"
 
 [sources]
 DiskArrayEngine = {path = ".."}
+
+[compat]
+Documenter = "1"
+DocumenterVitepress = "0.3"
