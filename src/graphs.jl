@@ -271,7 +271,7 @@ function collect_strategies(g::MwopGraph)
     end))
 
     #Join strategies for each node
-    map(enumerate(g.nodes)) do (inode, mainnode)
+    map(collect(g.nodes)) do (inode, mainnode)
         map(1:ndims(mainnode)) do idim
             allmerges[(inode, idim)]
         end
