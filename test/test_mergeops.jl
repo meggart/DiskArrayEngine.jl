@@ -103,7 +103,7 @@
     @test length(newnodes) == 1
     @test newnodes[1] == DAE.EmptyInput{Float64,1}((4,))
 
-    append!(g.nodes, newnodes)
+    DAE.add_nodes!(g, newnodes)
 
     deleteat!(g.connections, [1, 2])
     push!(g.connections, newconn)
