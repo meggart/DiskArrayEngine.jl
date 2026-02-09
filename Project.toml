@@ -4,6 +4,7 @@ version = "0.2.6"
 authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
 
 [deps]
+DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
@@ -30,6 +31,7 @@ DaggerExt = "Dagger"
 
 [compat]
 Dagger = "0.18, 0.19"
+DataStructures = "0.18,0.19.3"
 DiskArrays = "0.4.10"
 Graphs = "1"
 Interpolations = "0.14, 0.15, 0.16"

@@ -1,4 +1,5 @@
 using Graphs: Edge, AbstractGraph, Graphs
+using DataStructures: SortedDict
 struct MwopConnection
     inputids
     outputids
@@ -29,7 +30,7 @@ mutable struct MwopGraph <: AbstractGraph{Int}
     nodes
     connections
 end
-MwopGraph() = MwopGraph(1:0, Dict{Int,Any}(), [])
+MwopGraph() = MwopGraph(1:0, SortedDict{Int,Any}(), [])
 Base.zero(::Type{MwopGraph}) = MwopGraph()
 function Graphs.edges(g::MwopGraph)
     edges = Edge[]
@@ -118,6 +119,8 @@ function add_node!(g::MwopGraph, n::MwopOutNode)
     g.nodes[maxkey+1] = n
     maxkey + 1
 end
+add_nodes!(g::MwopGraph, nodes) = [add_node!(g, n) for n in nodes]
+
 
 ## Two connections are seen as equivalent when they apply the same operation
 ## on the same inputs
@@ -251,7 +254,7 @@ function eliminate_node(nodegraph, i_eliminate, strategies, appliedstrat)
 
         newconn, newnodes = merged_connection(appliedstrat, nodegraph, inconn, outconn, i_eliminate, newop, strategies, dimmap)
 
-        append!(nodegraph.nodes, newnodes)
+        add_nodes!(nodegraph, newnodes)
         push!(newconns, newconn)
     end
     deleteat!(nodegraph.connections, [inconids; outconids])
