@@ -1,6 +1,6 @@
 name = "DiskArrayEngine"
 uuid = "2d4b2e14-ccd6-4284-b8b0-2378ace7c126"
-version = "0.2.6"
+version = "0.3.0"
 authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
 
 [deps]
