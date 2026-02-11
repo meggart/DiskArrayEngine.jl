@@ -305,16 +305,23 @@ function fuse_step_block!(g::MwopGraph)
     end
 end
 
+function graph_fuse_ready(g::MwopGraph)
+    label = zeros(Int, maximum(keys(g.nodes)))
+    Graphs.connected_components!(label, g)
+    _, d = Graphs.components(label)
+    length(g.connections) == count(>(0), keys(d))
+end
+
 
 function fuse_graph!(g::MwopGraph)
 
     #Do all direct merges first
-    while length(g.connections) > 1
+    while !graph_fuse_ready(g)
         fuse_step_direct!(g) || break
     end
 
     #Then do block merges
-    while length(g.connections) > 1
+    while !graph_fuse_ready(g)
         fuse_step_block!(g::MwopGraph)
     end
 end
