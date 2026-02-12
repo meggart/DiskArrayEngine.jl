@@ -5,7 +5,6 @@ layout: home
 
 hero:
   name: "DiskArrayEngine.jl"
-  text: v0.2.3 (pre-alpha!)
   tagline: Tools for defining and running large computations without out-of-memory issues!
   image:
     <!-- src: /logo.png -->

@@ -1,4 +1,5 @@
 # DiskArrayEngine.jl
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://meggart.github.io/DiskArrayEngine.jl/stable)
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://meggart.github.io/DiskArrayEngine.jl/dev)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/meggart/DiskArrayEngine.jl/blob/main/LICENSE)
 [![CI](https://github.com/meggart/DiskArrayEngine.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/meggart/DiskArrayEngine.jl/actions/workflows/CI.yml)
