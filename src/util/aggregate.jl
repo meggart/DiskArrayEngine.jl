@@ -72,7 +72,7 @@ function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
     return GMDWop(tuple(inars),tuple(outspecs),agg.f)
 end
 
-function aggregate_diskarray(a,f,dimspec;skipmissing=false,strategy=:auto)
+function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto)
     
     hasmissings = Missing <: eltype(a)
     if strategy == :reduce || ((isa(f,DataType) || isa(f,UnionAll)) && f <: OnlineStat)
