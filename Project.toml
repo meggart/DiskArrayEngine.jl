@@ -1,10 +1,11 @@
 name = "DiskArrayEngine"
 uuid = "2d4b2e14-ccd6-4284-b8b0-2378ace7c126"
-version = "0.3.2"
+version = "0.3.3"
 authors = ["Fabian Gans <fgans@bgc-jena.mpg.de> and contributors"]
 
 [deps]
 DataStructures = "864edb3b-99cc-5e75-8d2d-829cb0a9cfe8"
+DifferentiationInterface = "a0c0ee7d-e4b9-4e03-894e-1c5f64a51d63"
 DiskArrays = "3c3547ce-8d99-4f5e-a174-61eb10b00ae3"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 FileWatching = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
