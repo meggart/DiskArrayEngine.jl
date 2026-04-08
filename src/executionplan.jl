@@ -1,4 +1,5 @@
 using Ipopt, Optimization, OptimizationIpopt
+import DifferentiationInterface: SecondOrder
 import OptimizationOptimJL
 using DiskArrays: DiskArrays, eachchunk, arraysize_from_chunksize
 using Statistics: mean
@@ -277,7 +278,8 @@ function optimize_loopranges(op::GMDWop,max_cache;tol_low=0.2,tol_high = 0.05,ma
   input_chunkspecs = get_chunkspec.(op.inars,(totsize,))
   output_chunkspecs = get_chunkspec.(op.outspecs,op.f.outtype)
   chunkspecs = (input_chunkspecs..., output_chunkspecs...)
-  optprob = OptimizationFunction(compute_time, Optimization.AutoForwardDiff(), cons = all_constraints!)
+  adt = SecondOrder(Optimization.AutoForwardDiff(), Optimization.AutoForwardDiff())
+  optprob = OptimizationFunction(compute_time, adt, cons=all_constraints!)
   prob = OptimizationProblem(optprob, x0, chunkspecs, lcons = lb, ucons = ub)
   sol = solve(prob, OptimizationOptimJL.IPNewton())
   @debug "Optimized Loop sizes: ", sol.u
