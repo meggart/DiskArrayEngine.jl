@@ -46,7 +46,7 @@ function split_dim_reasons(op,lr,outars)
     for (spec,ar) in zip(op.outspecs,outars)
         foreach(1:ndims(lr)) do idim
             if is_output_chunk_overlap(spec,ar,idim,lr)
-                @warn "Overlapping output chunks in dimension $idim"
+                op.f.red === nothing && @warn "Overlapping output chunks in dimension $idim"
                 push!(ret[idim],:output_chunk)
             end
             if is_output_reducedim(spec,ar,idim)

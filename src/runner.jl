@@ -171,8 +171,8 @@ end
 function default_loopbody(inow, op, inbuffers_pure, outbuffers, threaded, outars, cb, runfilter, piddir)
     @debug "inow = ", inow
     if all(c -> need_run(inow, c), runfilter)
-        inbuffers_wrapped = read_range.((inow,),op.inars,inbuffers_pure);
-        outbuffers_now = extract_outbuffer.((inow,),op.outspecs,op.f.init,op.f.buftype,outbuffers)
+        inbuffers_wrapped = read_range.((inow,), op.inars, inbuffers_pure)
+        outbuffers_now = extract_outbuffer.((inow,), op.outspecs, op.f.init, op.f.buftype, outbuffers)
         run_block(op,inow,inbuffers_wrapped,outbuffers_now,threaded)
         put_buffer.((inow,),outbuffers_now,outars,(piddir,))
         clean_aggregator.(outbuffers)

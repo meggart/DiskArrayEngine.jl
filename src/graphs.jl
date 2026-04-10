@@ -308,8 +308,8 @@ end
 function graph_fuse_ready(g::MwopGraph)
     label = zeros(Int, maximum(keys(g.nodes)))
     Graphs.connected_components!(label, g)
-    _, d = Graphs.components(label)
-    length(g.connections) == count(>(0), keys(d))
+    comps, _ = Graphs.components(label)
+    length(g.connections) == count(i -> length(i) > 1, comps)
 end
 
 
