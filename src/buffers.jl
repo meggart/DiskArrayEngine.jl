@@ -25,9 +25,10 @@ getloopinds(b::ArrayBuffer) = getloopinds(b.lw)
 function getbufsize(ia, lr)
     map(windowbuffersize, mysub(ia, lr.members), ia.lw.windows.members)
 end
-windowbuffersize(looprange, window) = maximum(looprange) do c
+windowbuffersize(looprange, window) =
+    maximum(looprange) do c
         last(inner_range(window[last(c)])) - first(inner_range(window[first(c)])) + 1
-end
+    end
 
 "Creates buffers for input arrays"
 function generate_inbuffers(inars, loopranges)
@@ -43,7 +44,10 @@ is_init_callable(::Union{DataType,UnionAll}) = Val{true}()
 array_from_init(::Nothing, buftype, bufsize) = zeros(buftype, bufsize)
 array_from_init(init, buftype, bufsize) = array_from_init(init, is_init_callable(init), buftype, bufsize)
 array_from_init(init, ::Val{true}, buftype, bufsize) = buftype[init() for _ in CartesianIndices(bufsize)]
-array_from_init(init, ::Val{false}, buftype, bufsize) = fill(convert(buftype, init), bufsize)
+function array_from_init(init, ::Val{false}, buftype, bufsize)
+    o = Array{buftype}(undef, bufsize)
+    fill!(o, init)
+end
 
 #buftype_from_init(_,ia) =
 
