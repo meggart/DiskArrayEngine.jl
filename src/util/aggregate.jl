@@ -72,12 +72,12 @@ function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
     return GMDWop(tuple(inars),tuple(outspecs),agg.f)
 end
 
-function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto)
+function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,outchunks=nothing)
     
     hasmissings = Missing <: eltype(a)
     if strategy == :reduce || ((isa(f,DataType) || isa(f,UnionAll)) && f <: OnlineStat)
         agg = ReduceAggregator(disk_onlinestat(f))
-        op = gmwop_for_aggregator(agg,dimspec,a)
+        op = gmwop_for_aggregator(agg,dimspec,a;outchunks)
         results_as_diskarrays(op)[1]
     elseif strategy == :direct
         rett = Base.promote_op(f,Vector{Base.nonmissingtype(eltype(a))})
@@ -85,7 +85,7 @@ function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto)
             rett = Union{rett,Missing}
         end
         agg = DirectAggregator(create_userfunction(f,rett))
-        op = gmwop_for_aggregator(agg,dimspec,a)
+        op = gmwop_for_aggregator(agg,dimspec,a;outchunks)
         results_as_diskarrays(op)[1]
     elseif strategy == :auto
         rett = Base.promote_op(f,Vector{Base.nonmissingtype(eltype(a))})
@@ -95,9 +95,9 @@ function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto)
         agg1 = DirectAggregator(create_userfunction(f,rett))
         agg2 = ReduceAggregator(disk_onlinestat(f))
     
-        op1 = gmwop_for_aggregator(agg1,dimspec,a)
+        op1 = gmwop_for_aggregator(agg1,dimspec,a;outchunks)
         p1 = optimize_loopranges(op1,5e8)
-        op2 = gmwop_for_aggregator(agg2,dimspec,a)
+        op2 = gmwop_for_aggregator(agg2,dimspec,a;outchunks)
         p2 = optimize_loopranges(op2,5e8)
         c1 = actual_io_costs(p1)
         c2 = actual_io_costs(p2)
