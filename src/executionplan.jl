@@ -300,11 +300,6 @@ end
 
 using OrderedCollections, Primes
 
-function kgv(i...)
-  f = LittleDict.(factor.(i))
-  prod((i)->first(i)^last(i),merge(max,f...))
-end
-kgv(i)=i
 
 
 function is_possible_candidate(cand,smax,optires,reltol_low,reltol_high)
@@ -313,7 +308,7 @@ function is_possible_candidate(cand,smax,optires,reltol_low,reltol_high)
 end
 
 function find_adjust_candidates(optires,smax,intsizes;reltol_low=0.2,reltol_high=0.05,max_order=2)
-  smallest_common = kgv(intsizes...)
+  smallest_common = lcm(intsizes...)
   if optires > smallest_common
     for ord in 1:max_order 
       rr = round(Int,optires/smallest_common*ord)
