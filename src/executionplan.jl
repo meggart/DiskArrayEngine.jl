@@ -298,8 +298,7 @@ function custom_loopranges(op, steps::Tuple)
   ExecutionPlan(input_chunkspecs, output_chunkspecs,Float64.(steps),totsize,tobj,ProductArray(lrc))
 end
 
-using OrderedCollections, Primes
-
+using OrderedCollections
 
 
 function is_possible_candidate(cand,smax,optires,reltol_low,reltol_high)
