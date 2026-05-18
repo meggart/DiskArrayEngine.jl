@@ -1,12 +1,21 @@
 @testset "Interpolation" begin
-    a = [i+j+k for i in 1:4, j in 1:5, k in 1:6]
+    a = [i+j for i in 1:5, j in 1:7, k=1:6]
     #source coordinates
-    x = 5.0:5.0:20.0
-    y = 2.0:3.0:14.0
+    x = 2.0:2.0:10.0
+    y = 2.0:2.0:14.0
     #target coordinates
-    x2 = 5.0:0.5:20.0
-    y2 = 1.5:1.0:14.5
-    r = interpolate_diskarray(a,(1=>(x,x2),2=>(y,y2)))
+    xedge = 2.0:1.0:10.0
+    youter = -5:1.0:19.
+    redge = interpolate_diskarray(a,(1=>(x,xedge),))
+    #compute(r)
+    @test redge[2,1,1] == 2.5
+    @test size(redge) == (9,7, 6)
+    rout = interpolate_diskarray(a,(2=>(y,youter),))
+    @test size(rout) == (5,25, 6)
+    @test_broken rout[1,1,1] == a[1,1,1]
+    r = interpolate_diskarray(a, (1=>(x, xedge), 2=>(y, youter)))
+    compute(r)
+    # Interestingly we need the third dimension for this to fail.
 end
 
 @testset "Aggregate" begin
