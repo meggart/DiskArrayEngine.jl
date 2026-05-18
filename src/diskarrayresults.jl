@@ -70,3 +70,8 @@ end
 function compute(a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true,kwargs...)
     compute!(nothing,a;runner,threaded,kwargs...)
 end
+
+function Base.show(io::IO,::MIME"text/plain",z::GMWOPResult)
+    println(io, "GMWOPResult of size $(size(z))")
+    println("Inputs:")
+end
