@@ -12,10 +12,11 @@
     @test size(redge) == (9,7, 6)
     rout = interpolate_diskarray(a,(2=>(y,youter),))
     @test size(rout) == (5,25, 6)
-    @test_broken rout[1,1,1] == a[1,1,1]
+    @test rout[1,1,1] == a[1,1,1]
     r = interpolate_diskarray(a, (1=>(x, xedge), 2=>(y, youter)))
-    compute(r)
-    # Interestingly we need the third dimension for this to fail.
+    @test compute(r)[2,1,1] == 2.5
+    @test compute(r)[2,2,1] == 2.5
+    @test r[1,13,1] == 4.5
 end
 
 @testset "Aggregate" begin
