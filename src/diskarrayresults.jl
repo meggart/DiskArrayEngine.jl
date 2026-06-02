@@ -72,6 +72,13 @@ function compute(a::DiskArrayEngine.GMWOPResult;runner=LocalRunner,threaded=true
 end
 
 function Base.show(io::IO,::MIME"text/plain",z::GMWOPResult)
-    println(io, "GMWOPResult of size $(size(z))")
-    println("Inputs:")
+  println(io, "Output #$(getioutspec(z)): ", join(string.(size(z)), " x "), " GMWOPResult{$(eltype(z))}")
+  print(io, "Inputs:    ")
+  for (i, inar) in enumerate(z.op.inars)
+    if i > 1
+      println()
+      print("           ")
+    end
+    print(io, join(string.(size(inar.a)), " x "), " ", describe(inar, i))
+  end
 end
