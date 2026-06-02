@@ -28,11 +28,16 @@ function Base.show(io::IO,::MIME"text/plain",lw::LoopWindows)
     print(io,"$li: Window of length $(length(w)) [")
     showifthere(io,w,1,sep=false)
     showifthere(io,w,2)
-    print(io," ... ")
-    showifthere(io,w,max(length(w)-1,3),sep=false)
+    if length(w) > 4 
+      print(io," ... ")
+    elseif length(w) > 2
+      print(io, ", ")
+    end
+    showifthere(io,w,max(length(w)-1,3), sep=false)
     showifthere(io,w,max(length(w),4))
     
   end
+  print(io, "]")
 end
 function showifthere(io,w,i;sep=true)
   if length(w)>=i

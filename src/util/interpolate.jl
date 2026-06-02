@@ -1,9 +1,10 @@
 using Interpolations: BSpline, Linear, NoInterp, extrapolate, interpolate, Flat
 export interpolate_diskarray, interpolate_diskarray!
-
+#=
 function getinterpinds(oldvals::AbstractRange, newvals::AbstractRange)
     (newvals.-first(oldvals))./step(oldvals).+1
 end
+=#
 function getinterpinds(r1,r2)
     rev = issorted(r1) ? false : issorted(r1,rev=true) ? true : error("Axis values are not sorted")
     map(r2) do ir

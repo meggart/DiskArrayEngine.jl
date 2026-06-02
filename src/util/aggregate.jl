@@ -72,6 +72,17 @@ function gmwop_for_aggregator(agg,dimspec,inar;ismem=false,outchunks=nothing)
     return GMDWop(tuple(inars),tuple(outspecs),agg.f)
 end
 
+# Todo Move function to first argument to enable do-blocks
+"""
+    aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,outchunks=nothing)
+
+Aggregate a DiskArray `a` with the aggregation function f.
+
+Certain functions are special cased and will use OnlineStats if possible to speed up the computation.
+This will never happen if you use a do-block.
+```julia
+    aggregate_diskarray(a,mean,(2=>nothing,3=>4,4=>[1,1,1,2,2,2,3,3,3,4,4,4,4,4,5,5,5]))
+"""    
 function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,outchunks=nothing)
     
     hasmissings = Missing <: eltype(a)
@@ -101,7 +112,7 @@ function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,ou
         p2 = optimize_loopranges(op2,5e8)
         c1 = actual_io_costs(p1)
         c2 = actual_io_costs(p2)
-        #we still prefer direct aggregatoin, so we giv it a slight lead:
+        #we still prefer direct aggregation, so we give it a slight lead:
         op = c1*0.9 < c2 ? op1 : op2
         results_as_diskarrays(op)[1]
     else

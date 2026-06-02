@@ -19,9 +19,9 @@ Base.ndims(n::MwopOutNode) = length(n.size)
 Base.size(n::MwopOutNode) = n.size
 describe(_::MwopOutNode, i) = "Output $i"
 describe(i::InputArray, j) = describe(i.a, j)
-describe(z::ZArray, _) = Zarr.zname(z)
+describe(z::ZArray, _) = "Zarray{$(eltype(z))} \"$(Zarr.zname(z))\""
 describe(z::Array{<:Any,0}, _) = z[]
-describe(z, i) = "Input $i"
+describe(z, i) = "$(typeof(z)) Input #$i"
 EmptyInput(n::MwopOutNode) = EmptyInput{n.eltype,length(n.size)}(n.size)
 Base.eltype(n::MwopOutNode) = n.eltype
 
