@@ -32,7 +32,7 @@ DaggerExt = "Dagger"
 [compat]
 Dagger = "0.18, 0.19"
 DataStructures = "0.18,0.19.3"
-DifferentiationInterface = "0.17"
+DifferentiationInterface = "0.7"
 DiskArrays = "0.4.10"
 Graphs = "1"
 Interpolations = "0.14, 0.15, 0.16"
