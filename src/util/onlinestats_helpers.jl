@@ -13,14 +13,14 @@ function fit_online!(xout,x,group,f,fg)
     ismissing(fx) || !isfinite(fx) || OnlineStats.fit!(stat, fx)
 end
 
-fin_online(x) = OnlineStats.nobs(x) == 0 ? missing : OnlineStats.value(x);
-disk_onlinestat(s::Type{<:OnlineStats.OnlineStat},rt=typeof(OnlineStats.value(s())),preproc=identity,groupconv=identity) = create_userfunction(
+fin_online(x, nvalid) = OnlineStats.nobs(x) < nvalid ? missing : OnlineStats.value(x);
+disk_onlinestat(s::Type{<:OnlineStats.OnlineStat}, rt=typeof(OnlineStats.value(s())), preproc=identity, groupconv=identity; min_nvalid=1) = create_userfunction(
     fit_online!,
     rt,
     is_mutating = true,
     red = OnlineStats.merge!, 
     init = s, 
-    finalize=fin_online,
+    finalize=Base.Fix2(fin_online, min_nvalid),
     buftype = typeof(s()),
     allow_threads=false,
     args = (preproc,groupconv)
@@ -38,7 +38,7 @@ OnlineStats.value(s::DerivedOnlineStat) = s.valuefunc(s.parent)
 OnlineStats.nobs(s::DerivedOnlineStat) = OnlineStats.nobs(s.parent)
 
 
-disk_onlinestat(s,args...) = disk_onlinestat(func_to_online[s]...,args...)
+disk_onlinestat(s, args...; kwargs...) = disk_onlinestat(func_to_online[s]..., args...; kwargs...)
 has_onlineversion(f) = f in keys(func_to_online)
 
 const func_to_online = Dict([
