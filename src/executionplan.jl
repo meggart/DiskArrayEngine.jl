@@ -1,6 +1,7 @@
 using Ipopt, Optimization, OptimizationIpopt
 import DifferentiationInterface: SecondOrder
 import OptimizationOptimJL
+import ForwardDiff
 using DiskArrays: DiskArrays, eachchunk, arraysize_from_chunksize
 using Statistics: mean
 using StatsBase: mode
