@@ -37,6 +37,13 @@ end
 DiskArrays.diskarrays_mapreduce_impl(f, op, a, dims, init, ::DiskArrayEngineBackend) =
     mapreduce_engine(f, op, a; dims, init)
 
+struct _DAEReducer{F,R} <: Function
+    f::F
+    r::R
+end
+(d::_DAEReducer{F,R})(xout, xin...) where {F,R} = xout[] = d.r(xout[], xin...)
+
+
 function mapreduce_engine(f, op, A...; dims=:, init=nothing, fin=identity)
     s, bcd = collect_bcdims(A)
     nd = maximum(bcd)
@@ -59,7 +66,7 @@ function mapreduce_engine(f, op, A...; dims=:, init=nothing, fin=identity)
     # end
     tf = Base.promote_op(f,eltype.(A)...)
     top = Base.promote_op(op,tf,tf)
-    func = create_userfunction(f,top,red=op,init=init,buftype=top,finalize=fin)
+    func = create_userfunction(_DAEReducer(f, op), top, red=op, init=init, buftype=top, finalize=fin, is_mutating=true, allow_threads=false)
     if dims === Colon()
         dims = ntuple(identity,nd)
     end
@@ -90,18 +97,19 @@ extrred(x,y) = min(first(x),first(y)),max(last(x),last(y))
 wrap_reduction(a) = a
 wrap_reduction(a::OnlineStats.OnlineStat) = OnlineStats.value(a)
 
-for (func, red, i) in (
-    (:(maximum), :max, :init_max),
-    (:(minimum), :min, :init_min),
-    (:(extrema), :extrred, :init_ex),
-    (:(sum), :(+), :init_sum),
-    )
+for func in (:maximum, :minimum, :sum, :extrema, :median, :mean)
     fname = Symbol("diskarrays_$(func)_impl")
     eval(quote
-        function DiskArrays.$(fname)(ff, a, ::DiskArrayEngineBackend; dims=:, skipmissing=false)
-            red = skipmissing ? missred($red) : $red
-            init = skipmissing ? missing : $i
-            mapreduce(ff, red, a; dims, init=($(i)(a)))
+        function DiskArrays.$(fname)(ff, a, ::DiskArrayEngineBackend; dims=:, skipmissing=false, strategy=:auto)
+            if dims === Colon()
+                dimspec = ntuple(i->i=>nothing, ndims(a))
+                res = aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)
+
+                compute(res)
+            else
+                dimspec = ntuple(i->i=>nothing, dims)
+                aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)
+            end
         end
     end)
 end
