@@ -3,8 +3,8 @@ using OnlineStats: OnlineStats
 using Statistics
 export engine, compute, compute!
 
-import DiskArrays: ComputeBackend
-struct DiskArrayEngineBackend <: ComputeBackend end
+# The backend type is owned by DiskArrays, we only add methods for it
+import DiskArrays: DiskArrayEngineBackend
 bcdims(p) = ntuple(identity,ndims(p))
 
 function collect_bcdims(A)
@@ -100,7 +100,8 @@ wrap_reduction(a::OnlineStats.OnlineStat) = OnlineStats.value(a)
 for func in (:maximum, :minimum, :sum, :extrema, :median, :mean)
     fname = Symbol("diskarrays_$(func)_impl")
     eval(quote
-        function DiskArrays.$(fname)(ff, a, ::DiskArrayEngineBackend; dims=:, skipmissing=false, strategy=:auto)
+        # `a::AbstractDiskArray` avoids an ambiguity with the `::ComputeBackend` fallback in DiskArrays
+        function DiskArrays.$(fname)(ff, a::A, ::DiskArrayEngineBackend; dims=:, skipmissing=false, strategy=:auto) where {A<:AbstractDiskArray}
             if dims === Colon()
                 dimspec = ntuple(i->i=>nothing, ndims(a))
                 res = aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)

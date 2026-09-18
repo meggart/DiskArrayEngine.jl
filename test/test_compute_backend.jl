@@ -1,5 +1,6 @@
 using DiskArrayEngine
-using DiskArrays: AbstractDiskArray, AccessCountDiskArray
+using DiskArrays: AbstractDiskArray, DiskArrayEngineBackend, withbackend
+using DiskArrays.TestTypes: AccessCountDiskArray
 using Statistics
 using Test
 
@@ -9,7 +10,8 @@ import DiskArrayEngine as DAE
 
 function make_arrays(data; chunksize=size(data))
     mat = data
-    da = AccessCountDiskArray(data; chunksize=chunksize)
+    # Select the backend per array, so the tests do not depend on the backend preference
+    da = withbackend(AccessCountDiskArray(data; chunksize=chunksize), DiskArrayEngineBackend())
     return (materialized=mat, disk=da)
 end
 
