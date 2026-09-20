@@ -40,6 +40,9 @@ function test_scalar_reductions(data; chunksize=ntuple(i -> max(1, size(data)[i]
             @test maximum(da) ≈ maximum(mat)
             @test maximum(identity, da) ≈ maximum(mat)
             @test maximum(x -> abs(x), da) ≈ maximum(x -> abs(x), mat)
+            # The OnlineStats path, `:auto` mostly picks the direct one for these small arrays
+            @test minimum(da; strategy=:reduce) ≈ minimum(mat)
+            @test maximum(da; strategy=:reduce) ≈ maximum(mat)
         end
 
         @testset "extrema" begin
@@ -92,7 +95,8 @@ function test_mapreduce(data; chunksize=ntuple(i -> max(1, size(data)[i] ÷ 2), 
 
         @testset "mapreduce (no dims, no init)" begin
             @test mapreduce(x -> 2x, +, da) ≈ mapreduce(x -> 2x, +, mat)
-            @test mapreduce(*, -, da) ≈ mapreduce(*, -, mat)
+            # `op` must be associative, chunks are reduced in an arbitrary order
+            @test mapreduce(abs, max, da) ≈ mapreduce(abs, max, mat)
         end
 
         @testset "mapreduce (dims=)" begin
@@ -101,8 +105,8 @@ function test_mapreduce(data; chunksize=ntuple(i -> max(1, size(data)[i] ÷ 2), 
         end
 
         @testset "mapreduce (init)" begin
-            @test Array(mapreduce(identity, +, da; init=0)) ≈ mapreduce(identity, +, mat; init=0)
-            @test Array(mapreduce(identity, *, da; init=1)) ≈ mapreduce(identity, *, mat; init=1)
+            @test mapreduce(identity, +, da; init=0) ≈ mapreduce(identity, +, mat; init=0)
+            @test mapreduce(identity, *, da; init=1) ≈ mapreduce(identity, *, mat; init=1)
             # An Int `init` with float data and `dims` is an InexactError in Base as well
             @test Array(mapreduce(identity, +, da; dims=1, init=0.0)) ≈ mapreduce(identity, +, mat; dims=1, init=0.0)
         end

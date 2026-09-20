@@ -34,14 +34,26 @@ function collect_bcdims(A)
     last.(oc), first.(oc)
 end
 
-DiskArrays.diskarrays_mapreduce_impl(f, op, a, dims, init, ::DiskArrayEngineBackend) =
-    mapreduce_engine(f, op, a; dims, init)
+function DiskArrays.diskarrays_mapreduce_impl(f, op, a, dims, init, ::DiskArrayEngineBackend)
+    res = mapreduce_engine(f, op, a; dims, init=neutral_element(f, op, a, init))
+    # Like in Base, a reduction over all dimensions returns a scalar
+    dims === Colon() ? only(compute(res)) : res
+end
+
+# The output buffers are initialized with `init`, so without one we need a neutral element of `op`
+neutral_element(f, op, a, init) = init
+function neutral_element(f, op, a, ::Base._InitialValue)
+    T = Base.promote_op(f, eltype(a))
+    op === max && return typemin(T)
+    op === min && return typemax(T)
+    Base.reduce_empty(op, T)
+end
 
 struct _DAEReducer{F,R} <: Function
     f::F
     r::R
 end
-(d::_DAEReducer{F,R})(xout, xin...) where {F,R} = xout[] = d.r(xout[], xin...)
+(d::_DAEReducer{F,R})(xout, xin...) where {F,R} = xout[] = d.r(xout[], d.f(xin...))
 
 
 function mapreduce_engine(f, op, A...; dims=:, init=nothing, fin=identity)
@@ -99,14 +111,16 @@ wrap_reduction(a::OnlineStats.OnlineStat) = OnlineStats.value(a)
 
 for func in (:maximum, :minimum, :sum, :extrema, :median, :mean)
     fname = Symbol("diskarrays_$(func)_impl")
+    # The direct aggregator broadcasts its result into the output, which does not work for the Tuple from `extrema`
+    default_strategy = QuoteNode(func === :extrema ? :reduce : :auto)
     eval(quote
         # `a::AbstractDiskArray` avoids an ambiguity with the `::ComputeBackend` fallback in DiskArrays
-        function DiskArrays.$(fname)(ff, a::A, ::DiskArrayEngineBackend; dims=:, skipmissing=false, strategy=:auto) where {A<:AbstractDiskArray}
+        function DiskArrays.$(fname)(ff, a::A, ::DiskArrayEngineBackend; dims=:, skipmissing=false, strategy=$default_strategy) where {A<:AbstractDiskArray}
             if dims === Colon()
                 dimspec = ntuple(i->i=>nothing, ndims(a))
                 res = aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)
 
-                compute(res)
+                only(compute(res))
             else
                 dimspec = ntuple(i->i=>nothing, dims)
                 aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)

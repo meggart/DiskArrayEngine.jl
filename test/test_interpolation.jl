@@ -26,8 +26,7 @@ end
     @test size(agg_mean) == (1,5,6)
     @test agg_mean[:,:,:] == mean(a, dims=1)
     agg_max = aggregate_diskarray(a, maximum, (2=>nothing,), strategy=:reduce)
-    # This gives all ones for some reason
-    @test_broken agg_max[:,:,:] == maximum(a, dims=2)
+    @test agg_max[:,:,:] == maximum(a, dims=2)
     agg_sec = aggregate_diskarray(a, mean, (2=>2,))
     # This should work but currently throws a bounds error
     @test_throws BoundsError agg_sec[:,:,:]
