@@ -103,16 +103,19 @@ function test_mapreduce(data; chunksize=ntuple(i -> max(1, size(data)[i] ÷ 2), 
         @testset "mapreduce (init)" begin
             @test Array(mapreduce(identity, +, da; init=0)) ≈ mapreduce(identity, +, mat; init=0)
             @test Array(mapreduce(identity, *, da; init=1)) ≈ mapreduce(identity, *, mat; init=1)
-            @test Array(mapreduce(identity, +, da; dims=1, init=0)) ≈ mapreduce(identity, +, mat; dims=1, init=0)
+            # An Int `init` with float data and `dims` is an InexactError in Base as well
+            @test Array(mapreduce(identity, +, da; dims=1, init=0.0)) ≈ mapreduce(identity, +, mat; dims=1, init=0.0)
         end
 
         @testset "mapreducedim!" begin
-            R = zeros(size(da, 1), size(da, 2), 1)
-            mapreducedim!(x -> 2x, +, R, da)
-            @test R ≈ mapreducedim!(x -> 2x, +, similar(R, size(da, 1), size(da, 2), 1), mat)
-            R2 = zeros(1, size(da, 2), size(da, 3))
-            mapreducedim!(x -> x^2, +, R2, da)
-            @test R2 ≈ mapreducedim!(x -> x^2, +, similar(R2), mat)
+            # Reduce over the last and over the first dimension
+            redsize(d) = ntuple(i -> i == d ? 1 : size(mat, i), ndims(mat))
+            R = zeros(redsize(ndims(mat)))
+            Base.mapreducedim!(x -> 2x, +, R, da)
+            @test R ≈ Base.mapreducedim!(x -> 2x, +, zero(R), mat)
+            R2 = zeros(redsize(1))
+            Base.mapreducedim!(x -> x^2, +, R2, da)
+            @test R2 ≈ Base.mapreducedim!(x -> x^2, +, zero(R2), mat)
         end
 
         @testset "mapfoldl (no init)" begin
