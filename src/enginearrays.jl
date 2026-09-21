@@ -2,30 +2,9 @@ using DiskArrays
 using OnlineStats: OnlineStats
 using Statistics
 export engine, compute, compute!
-abstract type AbstractEngineArray{T,N} <: AbstractDiskArray{T,N} end
-struct EngineArray{T,N,P} <: AbstractEngineArray{T,N}
-    parent::P
-    bcdims::Base.RefValue{NTuple{N,Int}}
-end
-EngineArray(p) = EngineArray{eltype(p),ndims(p),typeof(p)}(p,Ref(ntuple(identity,ndims(p))))
-unengine(a::EngineArray) = a.parent
-unengine(a) = a
-engine(p;bcdims=ntuple(identity,ndims(p))) = EngineArray{eltype(p),ndims(p),typeof(p)}(p,Ref(bcdims))
-engine(p::EngineArray;bcdims=ntuple(identity,ndims(p))) = EngineArray{eltype(p),ndims(p),typeof(p)}(p.parent,bcdims)
-function engine(p::AbstractEngineArray;bcdims=nothing)
-    if bcdims === nothing
-        p
-    else
-        bcdims=ntuple(identity,ndims(p))
-        EngineArray{eltype(p),ndims(p),typeof(p)}(p,Ref(bcdims))
-    end
-end
-Base.parent(p::EngineArray) = p.parent
-DiskArrays.readblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.readblock!(a.parent,xout,r...)
-DiskArrays.writeblock!(a::EngineArray,xout,r::OrdinalRange...) = DiskArrays.writeblock!(a.parent,xout,r...)
-Base.size(a::EngineArray) = size(a.parent)
-DiskArrays.eachchunk(a::EngineArray) = DiskArrays.eachchunk(a.parent)
-bcdims(a::EngineArray) = a.bcdims[]
+
+# The backend type is owned by DiskArrays, we only add methods for it
+import DiskArrays: DiskArrayEngineBackend
 bcdims(p) = ntuple(identity,ndims(p))
 
 function collect_bcdims(A)
@@ -55,7 +34,29 @@ function collect_bcdims(A)
     last.(oc), first.(oc)
 end
 
-function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing, fin = identity)
+function DiskArrays.diskarrays_mapreduce_impl(f, op, a, dims, init, ::DiskArrayEngineBackend)
+    res = mapreduce_engine(f, op, a; dims, init=neutral_element(f, op, a, init))
+    # Like in Base, a reduction over all dimensions returns a scalar
+    dims === Colon() ? only(compute(res)) : res
+end
+
+# The output buffers are initialized with `init`, so without one we need a neutral element of `op`
+neutral_element(f, op, a, init) = init
+function neutral_element(f, op, a, ::Base._InitialValue)
+    T = Base.promote_op(f, eltype(a))
+    op === max && return typemin(T)
+    op === min && return typemax(T)
+    Base.reduce_empty(op, T)
+end
+
+struct _DAEReducer{F,R} <: Function
+    f::F
+    r::R
+end
+(d::_DAEReducer{F,R})(xout, xin...) where {F,R} = xout[] = d.r(xout[], d.f(xin...))
+
+
+function mapreduce_engine(f, op, A...; dims=:, init=nothing, fin=identity)
     s, bcd = collect_bcdims(A)
     nd = maximum(bcd)
     ia = map(A) do ar
@@ -68,7 +69,7 @@ function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing
                 fill(1,sloop)
             end
         end
-        InputArray(unengine,windows = lw, dimsmap = bcdims(ar))
+        InputArray(ar, windows=lw, dimsmap=bcdims(ar))
     end
     # tf = Base.promote_op(f,Base.nonmissingtype.(eltype.(A))...)
     # top = Base.promote_op(op,tf,tf)
@@ -77,13 +78,13 @@ function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing
     # end
     tf = Base.promote_op(f,eltype.(A)...)
     top = Base.promote_op(op,tf,tf)
-    func = create_userfunction(f,top,red=op,init=init,buftype=top,finalize=fin)
+    func = create_userfunction(_DAEReducer(f, op), top, red=op, init=init, buftype=top, finalize=fin, is_mutating=true, allow_threads=false)
     if dims === Colon()
         dims = ntuple(identity,nd)
     end
     windows = map(ntuple(identity,nd)) do idim
         if idim in dims
-            Repeated(s[idim])
+            Repeated(1, s[idim])
         else
             1:s[idim]
         end
@@ -108,25 +109,28 @@ extrred(x,y) = min(first(x),first(y)),max(last(x),last(y))
 wrap_reduction(a) = a
 wrap_reduction(a::OnlineStats.OnlineStat) = OnlineStats.value(a)
 
-for (f,red,i) in (
-    (:(Base.maximum),:max,:init_max),
-    (:(Base.minimum),:min,:init_min),
-    (:(Base.extrema),:extrred,:init_ex),
-    (:(Base.sum),:(+),:init_sum),
-    )
+for func in (:maximum, :minimum, :sum, :extrema, :median, :mean)
+    fname = Symbol("diskarrays_$(func)_impl")
+    # The direct aggregator broadcasts its result into the output, which does not work for the Tuple from `extrema`
+    default_strategy = QuoteNode(func === :extrema ? :reduce : :auto)
     eval(quote
-    $f(a::AbstractEngineArray;dims=:,skipmissing=false) = $f(identity,a;dims,skipmissing)
-    function $f(ff::Base.Callable,a::AbstractEngineArray;dims=:,skipmissing=false)
-        red = skipmissing ? missred($red) : $red
-        init = skipmissing ? missing : $i
-        mapreduce(ff,red,a;dims,init=$(i)(a))
-    end 
-    
-    
-end)
+        # `a::AbstractDiskArray` avoids an ambiguity with the `::ComputeBackend` fallback in DiskArrays
+        function DiskArrays.$(fname)(ff, a::A, ::DiskArrayEngineBackend; dims=:, skipmissing=false, strategy=$default_strategy) where {A<:AbstractDiskArray}
+            if dims === Colon()
+                dimspec = ntuple(i->i=>nothing, ndims(a))
+                res = aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)
+
+                only(compute(res))
+            else
+                dimspec = ntuple(i->i=>nothing, dims)
+                aggregate_diskarray(a, $func, dimspec; skipmissing, preproc=ff, strategy)
+            end
+        end
+    end)
 end
 
-Base.mapslices(f,A::AbstractEngineArray...;dims,outchunks=nothing) = mapslices_engine(f,A;dims,outchunks)
+diskarrays_mapslices_impl(f, A...; dims, outchunks=nothing) =
+    mapslices_engine(Base.Fix1(Statistics.median, f), A; dims, outchunks)
 
 function mapslices_engine(f,A...;dims,outchunks=nothing)
     s, bcd = collect_bcdims(A)
@@ -173,14 +177,14 @@ end
 
 get_infered_types(f,inputtypes) = Base.promote_op(f,inputtypes...)
 
-Statistics.median(a::AbstractEngineArray;dims=()) = mapslices_engine(median,a;dims)
+diskarrays_median_impl(f, a; dims=()) = mapslices_engine(median, a; dims)
 
 
 struct EngineStyle{N} <: Base.Broadcast.AbstractArrayStyle{N} end
 using DiskArrays: ChunkStyle
 using Base.Broadcast: DefaultArrayStyle
 
-Base.BroadcastStyle(::Type{<:AbstractEngineArray{<:Any,N}}) where N = EngineStyle{N}()
+diskarrays_broadcaststyle(::Type{T}, ::DiskArrayEngineBackend) where T = EngineStyle{ndims(T)}()
 Base.BroadcastStyle(::EngineStyle{N}, ::EngineStyle{M}) where {N,M} = EngineStyle{max(N, M)}()
 function Base.BroadcastStyle(::EngineStyle{N}, ::DefaultArrayStyle{M}) where {N,M}
     return EngineStyle{max(N, M)}()
