@@ -2,7 +2,7 @@ export results_as_diskarrays
 using DiskArrays: AbstractDiskArray, RegularChunks
 using OffsetArrays: OffsetArray
 
-struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractEngineArray{T,N}
+struct GMWOPResult{T,N,G<:GMDWop,CS,ISPEC} <: AbstractDiskArray{T,N}
   op::G
   ires::Val{ISPEC}
   chunksize::CS

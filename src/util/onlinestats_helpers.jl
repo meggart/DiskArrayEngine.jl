@@ -44,8 +44,9 @@ has_onlineversion(f) = f in keys(func_to_online)
 const func_to_online = Dict([
     mean => (OnlineStats.Mean,Union{Float64,Missing}),
     sum => (OnlineStats.Sum,Union{Float64,Missing}),
-    extrema => (OnlineStats.Extrema, Union{Tuple{Float64,Float64},Missing}),
-    maximum => (DerivedOnlineStat{OnlineStats.Extrema,v -> last(OnlineStats.value(v)),OnlineStats.fit!,()}, Union{Float64,Missing}),
-    minimum => (DerivedOnlineStat{OnlineStats.Extrema,v -> first(OnlineStats.value(v)),OnlineStats.fit!,()}, Union{Float64,Missing}),
+    # `value(::Extrema)` is a NamedTuple `(min, max, nmin, nmax)`, so use the accessors instead of `first`/`last`
+    extrema => (DerivedOnlineStat{OnlineStats.Extrema,extrema,OnlineStats.fit!,()}, Union{Tuple{Float64,Float64},Missing}),
+    maximum => (DerivedOnlineStat{OnlineStats.Extrema,maximum,OnlineStats.fit!,()}, Union{Float64,Missing}),
+    minimum => (DerivedOnlineStat{OnlineStats.Extrema,minimum,OnlineStats.fit!,()}, Union{Float64,Missing}),
     median => (DerivedOnlineStat{OnlineStats.ExpandingHist,OnlineStats.median,OnlineStats.fit!,(200,)}, Union{Float64,Missing})
 ])

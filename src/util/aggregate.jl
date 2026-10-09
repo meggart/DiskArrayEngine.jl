@@ -83,11 +83,11 @@ This will never happen if you use a do-block.
 ```julia
     aggregate_diskarray(a,mean,(2=>nothing,3=>4,4=>[1,1,1,2,2,2,3,3,3,4,4,4,4,4,5,5,5]))
 """    
-function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,outchunks=nothing)
+function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto, outchunks=nothing, preproc=identity)
     
     hasmissings = Missing <: eltype(a)
     if strategy == :reduce || ((isa(f,DataType) || isa(f,UnionAll)) && f <: OnlineStat)
-        agg = ReduceAggregator(disk_onlinestat(f))
+        agg = ReduceAggregator(disk_onlinestat(f, preproc))
         op = gmwop_for_aggregator(agg,dimspec,a;outchunks)
         results_as_diskarrays(op)[1]
     elseif strategy == :direct
@@ -95,7 +95,7 @@ function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,ou
         if hasmissings
             rett = Union{rett,Missing}
         end
-        agg = DirectAggregator(create_userfunction(f,rett))
+        agg = DirectAggregator(create_userfunction(Base.Fix1(f, preproc), rett))
         op = gmwop_for_aggregator(agg,dimspec,a;outchunks)
         results_as_diskarrays(op)[1]
     elseif strategy == :auto
@@ -103,8 +103,8 @@ function aggregate_diskarray(a, f, dimspec; skipmissing=false, strategy=:auto,ou
         if hasmissings
             rett = Union{rett,Missing}
         end
-        agg1 = DirectAggregator(create_userfunction(f,rett))
-        agg2 = ReduceAggregator(disk_onlinestat(f))
+        agg1 = DirectAggregator(create_userfunction(Base.Fix1(f, preproc), rett))
+        agg2 = ReduceAggregator(disk_onlinestat(f, preproc))
     
         op1 = gmwop_for_aggregator(agg1,dimspec,a;outchunks)
         p1 = optimize_loopranges(op1,5e8)

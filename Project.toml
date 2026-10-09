@@ -26,6 +26,10 @@ Zarr = "0a941bbe-ad1d-11e8-39d9-ab76183a1d99"
 [weakdeps]
 Dagger = "d58978e5-989f-55fb-8d15-ea34adc7bf54"
 
+# TODO remove once JuliaIO/DiskArrays.jl#315 is merged and released
+[sources]
+DiskArrays = {url = "https://github.com/JuliaIO/DiskArrays.jl", rev = "as/backend_fallbacks"}
+
 [extensions]
 DaggerExt = "Dagger"
 
