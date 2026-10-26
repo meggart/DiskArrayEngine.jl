@@ -139,9 +139,9 @@ It manages the mapping between logical loop dimensions and physical array dimens
 
 Construct using `GMDWop(inars, outspecs, f)`, where `inars` and `outspecs` are collections of input and output specifications, and `f` is the user operation.
 """
-struct GMDWop{N,I,O,F<:UserOp,SPL}
-    inars::I
-    outspecs::O
+struct GMDWop{N,F<:UserOp,SPL}
+    inars::Tuple
+    outspecs::Tuple
     f::F
     windowsize::NTuple{N,Int}
     lspl::SPL
