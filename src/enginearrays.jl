@@ -68,7 +68,7 @@ function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing
                 fill(1,sloop)
             end
         end
-        InputArray(unengine,windows = lw, dimsmap = bcdims(ar))
+        InputArray(unengine(ar),windows = lw, dimsmap = bcdims(ar))
     end
     # tf = Base.promote_op(f,Base.nonmissingtype.(eltype.(A))...)
     # top = Base.promote_op(op,tf,tf)
@@ -83,7 +83,7 @@ function Base.mapreduce(f, op, A::AbstractEngineArray...; dims=:, init = nothing
     end
     windows = map(ntuple(identity,nd)) do idim
         if idim in dims
-            Repeated(s[idim])
+            Repeated(1,s[idim])
         else
             1:s[idim]
         end
